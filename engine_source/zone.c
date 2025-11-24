@@ -1,0 +1,1156 @@
+/*
+Copyright (C) 1996-1997 Id Software, Inc.
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+*/
+// zone.c
+
+#include "darkplaces.h"
+
+#ifdef _WIN32
+#include <windows.h>
+#include <winbase.h>
+#else
+#include <unistd.h>
+#endif
+
+// Baker:
+#define MEM_DETAIL_0	0
+#define MEM_ZONE_ONLY_1	1
+
+#define MEMHEADER_SENTINEL_FOR_ADDRESS(p) ((sentinel_seed ^ (unsigned int) (uintptr_t) (p)) + sentinel_seed)
+unsigned int sentinel_seed;
+
+qbool mem_bigendian = false;
+void *mem_mutex = NULL;
+
+// divVerent: enables file backed malloc using mmap to conserve swap space (instead of malloc)
+#ifndef FILE_BACKED_MALLOC
+# define FILE_BACKED_MALLOC 0
+#endif
+
+// LadyHavoc: enables our own low-level allocator (instead of malloc)
+#ifndef MEMCLUMPING
+# define MEMCLUMPING 0
+#endif
+#ifndef MEMCLUMPING_FREECLUMPS
+# define MEMCLUMPING_FREECLUMPS 0
+#endif
+
+#if MEMCLUMPING
+// smallest unit we care about is this many bytes
+#define MEMUNIT 128
+// try to do 32MB clumps, but overhead eats into this
+#ifndef MEMWANTCLUMPSIZE
+# define MEMWANTCLUMPSIZE (1<<27)
+#endif
+// give malloc padding so we can't waste most of a page at the end
+#define MEMCLUMPSIZE (MEMWANTCLUMPSIZE - MEMWANTCLUMPSIZE/MEMUNIT/32 - 128)
+#define MEMBITS (MEMCLUMPSIZE / MEMUNIT)
+#define MEMBITINTS (MEMBITS / 32)
+
+typedef struct memclump_s
+{
+	// contents of the clump
+	unsigned char block[MEMCLUMPSIZE];
+	// should always be MEMCLUMP_SENTINEL
+	unsigned int sentinel1;
+	// if a bit is on, it means that the MEMUNIT bytes it represents are
+	// allocated, otherwise free
+	unsigned int bits[MEMBITINTS];
+	// should always be MEMCLUMP_SENTINEL
+	unsigned int sentinel2;
+	// if this drops to 0, the clump is freed
+	size_t blocksinuse;
+	// largest block of memory available (this is reset to an optimistic
+	// number when anything is freed, and updated when alloc fails the clump)
+	size_t largestavailable;
+	// next clump in the chain
+	struct memclump_s *chain;
+}
+memclump_t;
+
+#if MEMCLUMPING == 2
+static memclump_t masterclump;
+#endif
+static memclump_t *clumpchain = NULL;
+#endif
+
+
+cvar_t developer_memory = {CF_CLIENT | CF_SERVER, "developer_memory", "0", "prints debugging information about memory allocations"};
+cvar_t developer_memorydebug = {CF_CLIENT | CF_SERVER, "developer_memorydebug", "0", "enables memory corruption checks (very slow)"};
+cvar_t developer_memoryreportlargerthanmb = {CF_CLIENT | CF_SERVER, "developer_memorylargerthanmb", "16", "prints debugging information about memory allocations over this size"};
+cvar_t sys_memsize_physical = {CF_CLIENT | CF_SERVER | CF_READONLY, "sys_memsize_physical", "", "physical memory size in MB (or empty if unknown)"};
+cvar_t sys_memsize_virtual = {CF_CLIENT | CF_SERVER | CF_READONLY, "sys_memsize_virtual", "", "virtual memory size in MB (or empty if unknown)"};
+
+static mempool_t *poolchain = NULL;
+
+void Mem_PrintStats(void);
+void Mem_PrintList(size_t minallocationsize, ccs *mempool_name_wanted);
+
+#if FILE_BACKED_MALLOC
+	#include <stdlib.h>
+	#include <sys/mman.h>
+	#ifndef MAP_NORESERVE
+		#define MAP_NORESERVE 0
+	#endif
+	typedef struct mmap_data_s
+	{
+		size_t len;
+	}
+	mmap_data_t;
+	static void *mmap_malloc(size_t size)
+	{
+		char vabuf[MAX_OSPATH + 1];
+		char *tmpdir = getenv("TEMP");
+		mmap_data_t *data;
+		int fd;
+		size += sizeof(mmap_data_t); // waste block
+		dpsnprintf(vabuf, sizeof(vabuf), "%s/darkplaces.XXXXXX", tmpdir ? tmpdir : "/tmp");
+		fd = mkstemp(vabuf);
+		if (fd < 0)
+			return NULL;
+		ftruncate(fd, size);
+		data = (unsigned char *) mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_NORESERVE, fd, 0);
+		close(fd);
+		unlink(vabuf);
+		if (!data || data == (void *)-1)
+			return NULL;
+		data->len = size;
+		return (void *) (data + 1);
+	}
+	static void mmap_free(void *mem)
+	{
+		mmap_data_t *data;
+		if (!mem)
+			return;
+		data = ((mmap_data_t *) mem) - 1;
+		munmap(data, data->len);
+	}
+	#define malloc mmap_malloc
+	#define free mmap_free
+#endif // FILE_BACKED_MALLOC
+
+#if MEMCLUMPING != 2
+	// Baker: This is the norm
+	
+	
+	// some platforms have a malloc that returns NULL but succeeds later
+	// (Windows growing its swapfile for example)
+	static void *attempt_malloc(size_t size)
+	{
+	#ifndef _WIN32
+		return malloc(size);
+	#else
+		void *base;
+		// try for half a second or so
+		unsigned int attempts = 500;
+		while (attempts--)
+		{
+			base = (void *)malloc(size);
+			if (base)
+				return base;
+			Sys_Sleep(1000);
+		}
+		return NULL;
+	#endif
+}
+#endif // #if MEMCLUMPING != 2
+
+#if MEMCLUMPING
+		// Baker: This is not the norm
+	static memclump_t *Clump_NewClump(void)
+	{
+		memclump_t **clumpchainpointer;
+		memclump_t *clump;
+	#if MEMCLUMPING == 2
+		if (clumpchain)
+			return NULL;
+		clump = &masterclump;
+	#else
+		clump = (memclump_t*)attempt_malloc(sizeof(memclump_t));
+		if (!clump)
+			return NULL;
+	#endif
+	
+		// initialize clump
+		if (developer_memorydebug.integer)
+			memset(clump, 0xEF, sizeof(*clump));
+		clump->sentinel1 = MEMHEADER_SENTINEL_FOR_ADDRESS(&clump->sentinel1);
+		memset(clump->bits, 0, sizeof(clump->bits));
+		clump->sentinel2 = MEMHEADER_SENTINEL_FOR_ADDRESS(&clump->sentinel2);
+		clump->blocksinuse = 0;
+		clump->largestavailable = 0;
+		clump->chain = NULL;
+	
+		// link clump into chain
+		for (clumpchainpointer = &clumpchain;*clumpchainpointer;clumpchainpointer = &(*clumpchainpointer)->chain)
+			;
+		*clumpchainpointer = clump;
+	
+		return clump;
+	}
+#endif // #if MEMCLUMPING
+
+// low level clumping functions, all other memory functions use these
+static void *Clump_AllocBlock(size_t size)
+{
+	unsigned char *base;
+#if MEMCLUMPING
+	// Baker: This is not the norm
+	if (size <= MEMCLUMPSIZE)
+	{
+		intptr_t index;
+		size_t bit;
+		size_t needbits;
+		size_t startbit;
+		size_t endbit;
+		size_t needints;
+		intptr_t startindex;
+		intptr_t endindex;
+		unsigned int value;
+		unsigned int mask;
+		unsigned int *array;
+		memclump_t **clumpchainpointer;
+		memclump_t *clump;
+		needbits = (size + MEMUNIT - 1) / MEMUNIT;
+		needints = (needbits+31)>>5;
+		for (clumpchainpointer = &clumpchain;;clumpchainpointer = &(*clumpchainpointer)->chain)
+		{
+			clump = *clumpchainpointer;
+			if (!clump)
+			{
+				clump = Clump_NewClump();
+				if (!clump)
+					return NULL;
+			}
+			if (clump->sentinel1 != MEMHEADER_SENTINEL_FOR_ADDRESS(&clump->sentinel1))
+				Sys_Error ("Clump_AllocBlock: trashed sentinel1");
+			if (clump->sentinel2 != MEMHEADER_SENTINEL_FOR_ADDRESS(&clump->sentinel2))
+				Sys_Error ("Clump_AllocBlock: trashed sentinel2");
+			startbit = 0;
+			endbit = startbit + needbits;
+			array = clump->bits;
+			// do as fast a search as possible, even if it means crude alignment
+			if (needbits >= 32)
+			{
+				// large allocations are aligned to large boundaries
+				// furthermore, they are allocated downward from the top...
+				endindex = MEMBITINTS;
+				startindex = endindex - needints;
+				index = endindex;
+				while (--index >= startindex)
+				{
+					if (array[index])
+					{
+						endindex = index;
+						startindex = endindex - needints;
+						if (startindex < 0)
+							goto nofreeblock;
+					}
+				}
+				startbit = startindex*32;
+				goto foundblock;
+			}
+			else
+			{
+				// search for a multi-bit gap in a single int
+				// (not dealing with the cases that cross two ints)
+				mask = (1<<needbits)-1;
+				endbit = 32-needbits;
+				bit = endbit;
+				for (index = 0;index < MEMBITINTS;index++)
+				{
+					value = array[index];
+					if (value != 0xFFFFFFFFu)
+					{
+						// there may be room in this one...
+						for (bit = 0;bit < endbit;bit++)
+						{
+							if (!(value & (mask<<bit)))
+							{
+								startbit = index*32+bit;
+								goto foundblock;
+							}
+						}
+					}
+				}
+				goto nofreeblock;
+			}
+foundblock:
+			endbit = startbit + needbits;
+			// mark this range as used
+			// TODO: optimize
+			for (bit = startbit;bit < endbit;bit++)
+				if (clump->bits[bit>>5] & (1<<(bit & 31)))
+					Sys_Error ("Clump_AllocBlock: internal error (%d needbits)", needbits);
+			for (bit = startbit;bit < endbit;bit++)
+				clump->bits[bit>>5] |= (1<<(bit & 31));
+			clump->blocksinuse += needbits;
+			base = clump->block + startbit * MEMUNIT;
+			if (developer_memorydebug.integer)
+				memset(base, 0xBF, needbits * MEMUNIT);
+			return base;
+nofreeblock:
+			;
+		}
+		// never reached
+		return NULL;
+	}
+	// too big, allocate it directly
+#endif //#if MEMCLUMPING
+#if MEMCLUMPING == 2
+	// Baker: This is not the norma
+	return NULL;
+#else
+	// Baker: This is the norm
+	base = (unsigned char *)attempt_malloc(size);
+	if (base && developer_memorydebug.integer)
+		memset(base, 0xAF, size);
+	return base;
+#endif
+}
+static void Clump_FreeBlock(void *base, size_t size)
+{
+#if MEMCLUMPING
+	size_t needbits;
+	size_t startbit;
+	size_t endbit;
+	size_t bit;
+	memclump_t **clumpchainpointer;
+	memclump_t *clump;
+	unsigned char *start = (unsigned char *)base;
+	for (clumpchainpointer = &clumpchain;(clump = *clumpchainpointer);clumpchainpointer = &(*clumpchainpointer)->chain)
+	{
+		if (start >= clump->block && start < clump->block + MEMCLUMPSIZE)
+		{
+			if (clump->sentinel1 != MEMHEADER_SENTINEL_FOR_ADDRESS(&clump->sentinel1))
+				Sys_Error ("Clump_FreeBlock: trashed sentinel1");
+			if (clump->sentinel2 != MEMHEADER_SENTINEL_FOR_ADDRESS(&clump->sentinel2))
+				Sys_Error ("Clump_FreeBlock: trashed sentinel2");
+			if (start + size > clump->block + MEMCLUMPSIZE)
+				Sys_Error ("Clump_FreeBlock: block overrun");
+			// the block belongs to this clump, clear the range
+			needbits = (size + MEMUNIT - 1) / MEMUNIT;
+			startbit = (start - clump->block) / MEMUNIT;
+			endbit = startbit + needbits;
+			// first verify all bits are set, otherwise this may be misaligned or a double free
+			for (bit = startbit;bit < endbit;bit++)
+				if ((clump->bits[bit>>5] & (1<<(bit & 31))) == 0)
+					Sys_Error ("Clump_FreeBlock: double free");
+			for (bit = startbit;bit < endbit;bit++)
+				clump->bits[bit>>5] &= ~(1<<(bit & 31));
+			clump->blocksinuse -= needbits;
+			memset(base, 0xFF, needbits * MEMUNIT);
+			// if all has been freed, free the clump itself
+			if (clump->blocksinuse == 0)
+			{
+				*clumpchainpointer = clump->chain;
+				if (developer_memorydebug.integer)
+					memset(clump, 0xFF, sizeof(*clump));
+#if MEMCLUMPING != 2
+				free(clump);
+#endif
+			}
+			return;
+		}
+	}
+	// does not belong to any known chunk...  assume it was a direct allocation
+#endif // #if MEMCLUMPING
+#if MEMCLUMPING != 2
+	// Baker: This is the norm
+	memset(base, 0xFF, size);
+	free(base);
+#endif // #if MEMCLUMPING != 2
+}
+
+void *_Mem_Alloc(mempool_t *pool, void *olddata, size_t size, size_t alignment, const char *filename, int fileline)
+{
+	unsigned int sentinel1;
+	unsigned int sentinel2;
+	size_t realsize;
+	size_t sharedsize;
+	size_t remainsize;
+	memheader_t *mem;
+	memheader_t *oldmem;
+	unsigned char *base;
+
+	if (size <= 0) {
+		if (olddata)
+			_Mem_Free(olddata, filename, fileline);
+		return NULL;
+	}
+
+	if (pool == NULL) {
+		if (olddata)
+			pool = ((memheader_t *)((unsigned char *) olddata - sizeof(memheader_t)))->pool;
+		else
+			Sys_Error ("Mem_Alloc: pool == NULL (alloc at %s:%d)", filename, fileline);
+	}
+	if (mem_mutex)
+		Thread_LockMutex(mem_mutex);
+	if (developer_memory.integer || size >= developer_memoryreportlargerthanmb.value * 1048576)
+		Con_DPrintLinef ("Mem_Alloc: pool %s, file %s:%d, size %f bytes (%f MB)", pool->name, filename, fileline, (double)size, (double)size / 1048576.0f);
+	//if (developer.integer > 0 && developer_memorydebug.integer)
+	//	_Mem_CheckSentinelsGlobal(filename, fileline);
+	pool->totalsize += size;
+	realsize = alignment + sizeof(memheader_t) + size + sizeof(sentinel2);
+	pool->realsize += realsize;
+	base = (unsigned char *)Clump_AllocBlock(realsize);
+
+	if (base == NULL) {
+		Mem_PrintList(0, MEM_DETAIL_0);
+		Mem_PrintStats();
+		Mem_PrintList(1<<30, MEM_DETAIL_0);
+		Mem_PrintStats();
+		Sys_Error ("Mem_Alloc: out of memory (alloc of size %f (%.3fMB) at %s:%d)", (double)realsize, (double)realsize / (1 << 20), filename, fileline);
+	}
+	// calculate address that aligns the end of the memheader_t to the specified alignment
+	mem = (memheader_t*)((((size_t)base + sizeof(memheader_t) + (alignment-1)) & ~(alignment-1)) - sizeof(memheader_t));
+	mem->baseaddress = (void*)base;
+	mem->filename = filename;
+	mem->fileline = fileline;
+#ifdef _DEBUG
+	static int itero;
+	if (itero >= 20786 && String_Contains_Caseless (filename, "zone")) {
+		int j = 5;
+	}
+	mem->iterxy = itero ++;
+
+#endif
+
+	mem->size = size;
+	mem->pool = pool;
+
+	// calculate sentinels (detects buffer overruns, in a way that is hard to exploit)
+	sentinel1 = MEMHEADER_SENTINEL_FOR_ADDRESS(&mem->sentinel);
+	sentinel2 = MEMHEADER_SENTINEL_FOR_ADDRESS((unsigned char *) mem + sizeof(memheader_t) + mem->size);
+	mem->sentinel = sentinel1;
+	memcpy((unsigned char *) mem + sizeof(memheader_t) + mem->size, &sentinel2, sizeof(sentinel2));
+
+	// append to head of list
+	List_Add(&mem->list, &pool->chain);
+
+	if (mem_mutex)
+		Thread_UnlockMutex(mem_mutex);
+
+	// copy the shared portion in the case of a realloc, then memset the rest
+	sharedsize = 0;
+	remainsize = size;
+	if (olddata)
+	{
+		oldmem = (memheader_t*)olddata - 1;
+		sharedsize = min(oldmem->size, size);
+		memcpy((void *)((unsigned char *) mem + sizeof(memheader_t)), olddata, sharedsize);
+		remainsize -= sharedsize;
+		_Mem_Free(olddata, filename, fileline);
+	}
+	memset((void *)((unsigned char *) mem + sizeof(memheader_t) + sharedsize), 0, remainsize);
+	return (void *)((unsigned char *) mem + sizeof(memheader_t));
+}
+
+// only used by _Mem_Free and _Mem_FreePool
+static void _Mem_FreeBlock(memheader_t *mem, const char *filename, int fileline)
+{
+	mempool_t *pool;
+	size_t size;
+	size_t realsize;
+	unsigned int sentinel1;
+	unsigned int sentinel2;
+
+	// check sentinels (detects buffer overruns, in a way that is hard to exploit)
+	sentinel1 = MEMHEADER_SENTINEL_FOR_ADDRESS(&mem->sentinel);
+	sentinel2 = MEMHEADER_SENTINEL_FOR_ADDRESS((unsigned char *) mem + sizeof(memheader_t) + mem->size);
+	if (mem->sentinel != sentinel1)
+		Sys_Error ("Mem_Free: trashed head sentinel (alloc at %s:%d, free at %s:%d)", mem->filename, mem->fileline, filename, fileline);
+	if (memcmp((unsigned char *) mem + sizeof(memheader_t) + mem->size, &sentinel2, sizeof(sentinel2)))
+		Sys_Error ("Mem_Free: trashed tail sentinel (alloc at %s:%d, free at %s:%d)", mem->filename, mem->fileline, filename, fileline);
+
+	pool = mem->pool;
+	if (developer_memory.integer)
+		Con_DPrintf ("Mem_Free: pool %s, alloc %s:%d, free %s:%d, size %d bytes\n", pool->name, mem->filename, mem->fileline, filename, fileline, (int)(mem->size));
+	// unlink memheader from doubly linked list
+	if (mem->list.prev->next != &mem->list || mem->list.next->prev != &mem->list)
+		Sys_Error ("Mem_Free: not allocated or double freed (free at %s:%d)", filename, fileline);
+	if (mem_mutex)
+		Thread_LockMutex(mem_mutex);
+	List_Delete(&mem->list);
+	// memheader has been unlinked, do the actual free now
+	size = mem->size;
+	realsize = sizeof(memheader_t) + size + sizeof(sentinel2);
+	pool->totalsize -= size;
+	pool->realsize -= realsize;
+	Clump_FreeBlock(mem->baseaddress, realsize);
+	if (mem_mutex)
+		Thread_UnlockMutex(mem_mutex);
+}
+
+void _Mem_Free(void *data, const char *filename, int fileline)
+{
+	if (data == NULL) {
+		Con_DPrintLinef ("Mem_Free: data == NULL (called at %s:%d)", filename, fileline);
+		return;
+	}
+
+	if (developer_memorydebug.integer)
+	{
+		//_Mem_CheckSentinelsGlobal(filename, fileline);
+		if (!Mem_IsAllocated(NULL, data))
+			Sys_Error ("Mem_Free: data is not allocated (called at %s:%d)", filename, fileline);
+	}
+
+	_Mem_FreeBlock((memheader_t *)((unsigned char *) data - sizeof(memheader_t)), filename, fileline);
+}
+
+// Baker: As far as I can tell, no mempool ever has a parent.
+mempool_t *_Mem_AllocPool(const char *name, unsigned flags, mempool_t *parent, const char *filename, int fileline)
+{
+#ifdef _DEBUG
+	if (String_Contains_Caseless (name, "mesh")) {
+		int j = 5;
+	}
+#endif
+	mempool_t *pool;
+	if (developer_memorydebug.integer)
+		_Mem_CheckSentinelsGlobal(filename, fileline);
+	pool = (mempool_t *)Clump_AllocBlock(sizeof(mempool_t));
+	if (pool == NULL)
+	{
+		Mem_PrintList(0, MEM_DETAIL_0);
+		Mem_PrintStats();
+		Mem_PrintList(1<<30, MEM_DETAIL_0);
+		Mem_PrintStats();
+		Sys_Error ("Mem_AllocPool: out of memory (allocpool at %s:%d)", filename, fileline);
+	}
+	memset(pool, 0, sizeof(mempool_t));
+	pool->sentinel1 = MEMHEADER_SENTINEL_FOR_ADDRESS(&pool->sentinel1);
+	pool->sentinel2 = MEMHEADER_SENTINEL_FOR_ADDRESS(&pool->sentinel2);
+	pool->filename = filename;
+	pool->fileline = fileline;
+	pool->memflags = flags;
+	List_Create(&pool->chain);
+	pool->totalsize = 0;
+	pool->realsize = sizeof(mempool_t);
+	strlcpy (pool->name, name, sizeof (pool->name));
+	pool->parent = parent;
+	pool->next = poolchain;
+	poolchain = pool;
+	return pool;
+}
+
+void _Mem_FreePool(mempool_t **poolpointer, const char *filename, int fileline)
+{
+	mempool_t *pool = *poolpointer;
+	mempool_t **chainaddress, *iter, *temp;
+
+	if (developer_memorydebug.integer)
+		_Mem_CheckSentinelsGlobal(filename, fileline);
+	if (pool)
+	{
+		// unlink pool from chain
+		for (chainaddress = &poolchain;*chainaddress && *chainaddress != pool;chainaddress = &((*chainaddress)->next));
+		if (*chainaddress != pool)
+			Sys_Error ("Mem_FreePool: pool already free (freepool at %s:%d)", filename, fileline);
+		if (pool->sentinel1 != MEMHEADER_SENTINEL_FOR_ADDRESS(&pool->sentinel1))
+			Sys_Error ("Mem_FreePool: trashed pool sentinel 1 (allocpool at %s:%d, freepool at %s:%d)", pool->filename, pool->fileline, filename, fileline);
+		if (pool->sentinel2 != MEMHEADER_SENTINEL_FOR_ADDRESS(&pool->sentinel2))
+			Sys_Error ("Mem_FreePool: trashed pool sentinel 2 (allocpool at %s:%d, freepool at %s:%d)", pool->filename, pool->fileline, filename, fileline);
+		*chainaddress = pool->next;
+
+		// free memory owned by the pool
+		while (!List_Is_Empty(&pool->chain))
+			_Mem_FreeBlock(List_First_Entry(&pool->chain, memheader_t, list), filename, fileline);
+
+		// free child pools, too
+		for(iter = poolchain; iter; iter = temp) {
+			temp = iter->next;
+			if (iter->parent == pool)
+				_Mem_FreePool(&temp, filename, fileline);
+		}
+
+		// free the pool itself
+		Clump_FreeBlock(pool, sizeof(*pool));
+
+		*poolpointer = NULL;
+	}
+}
+
+void _Mem_EmptyPool(mempool_t *pool, const char *filename, int fileline)
+{
+	mempool_t *chainaddress;
+
+	if (developer_memorydebug.integer)
+	{
+		//_Mem_CheckSentinelsGlobal(filename, fileline);
+		// check if this pool is in the poolchain
+		for (chainaddress = poolchain;chainaddress;chainaddress = chainaddress->next)
+			if (chainaddress == pool)
+				break;
+		if (!chainaddress)
+			Sys_Error ("Mem_EmptyPool: pool is already free (emptypool at %s:%d)", filename, fileline);
+	}
+	if (pool == NULL)
+		Sys_Error ("Mem_EmptyPool: pool == NULL (emptypool at %s:%d)", filename, fileline);
+	if (pool->sentinel1 != MEMHEADER_SENTINEL_FOR_ADDRESS(&pool->sentinel1))
+		Sys_Error ("Mem_EmptyPool: trashed pool sentinel 1 (allocpool at %s:%d, emptypool at %s:%d)", pool->filename, pool->fileline, filename, fileline);
+	if (pool->sentinel2 != MEMHEADER_SENTINEL_FOR_ADDRESS(&pool->sentinel2))
+		Sys_Error ("Mem_EmptyPool: trashed pool sentinel 2 (allocpool at %s:%d, emptypool at %s:%d)", pool->filename, pool->fileline, filename, fileline);
+
+	// free memory owned by the pool
+	while (!List_Is_Empty(&pool->chain))
+		_Mem_FreeBlock(List_First_Entry(&pool->chain, memheader_t, list), filename, fileline);
+
+	// empty child pools, too
+	for(chainaddress = poolchain; chainaddress; chainaddress = chainaddress->next)
+		if (chainaddress->parent == pool)
+			_Mem_EmptyPool(chainaddress, filename, fileline);
+
+}
+
+void _Mem_CheckSentinels(void *data, const char *filename, int fileline)
+{
+	memheader_t *mem;
+	unsigned int sentinel1;
+	unsigned int sentinel2;
+
+	if (data == NULL)
+		Sys_Error ("Mem_CheckSentinels: data == NULL (sentinel check at %s:%d)", filename, fileline);
+
+	mem = (memheader_t *)((unsigned char *) data - sizeof(memheader_t));
+	sentinel1 = MEMHEADER_SENTINEL_FOR_ADDRESS(&mem->sentinel);
+	sentinel2 = MEMHEADER_SENTINEL_FOR_ADDRESS((unsigned char *) mem + sizeof(memheader_t) + mem->size);
+	if (mem->sentinel != sentinel1)
+		Sys_Error ("Mem_Free: trashed head sentinel (alloc at %s:%d, sentinel check at %s:%d)", mem->filename, mem->fileline, filename, fileline);
+	if (memcmp((unsigned char *) mem + sizeof(memheader_t) + mem->size, &sentinel2, sizeof(sentinel2)))
+		Sys_Error ("Mem_Free: trashed tail sentinel (alloc at %s:%d, sentinel check at %s:%d)", mem->filename, mem->fileline, filename, fileline);
+}
+
+#if MEMCLUMPING
+	// Baker: This is not the norm
+static void _Mem_CheckClumpSentinels(memclump_t *clump, const char *filename, int fileline)
+{
+	// this isn't really very useful
+	if (clump->sentinel1 != MEMHEADER_SENTINEL_FOR_ADDRESS(&clump->sentinel1))
+		Sys_Error ("Mem_CheckClumpSentinels: trashed sentinel 1 (sentinel check at %s:%d)", filename, fileline);
+	if (clump->sentinel2 != MEMHEADER_SENTINEL_FOR_ADDRESS(&clump->sentinel2))
+		Sys_Error ("Mem_CheckClumpSentinels: trashed sentinel 2 (sentinel check at %s:%d)", filename, fileline);
+}
+#endif // #if MEMCLUMPING
+
+void _Mem_CheckSentinelsGlobal(const char *filename, int fileline)
+{
+	memheader_t *mem;
+#if MEMCLUMPING
+	// Baker: This is not the norm
+	memclump_t *clump;
+#endif // MEMCLUMPING != 0
+	mempool_t *pool;
+	for (pool = poolchain;pool;pool = pool->next)
+	{
+		if (pool->sentinel1 != MEMHEADER_SENTINEL_FOR_ADDRESS(&pool->sentinel1))
+			Sys_Error ("Mem_CheckSentinelsGlobal: trashed pool sentinel 1 (allocpool at %s:%d, sentinel check at %s:%d)", pool->filename, pool->fileline, filename, fileline);
+		if (pool->sentinel2 != MEMHEADER_SENTINEL_FOR_ADDRESS(&pool->sentinel2))
+			Sys_Error ("Mem_CheckSentinelsGlobal: trashed pool sentinel 2 (allocpool at %s:%d, sentinel check at %s:%d)", pool->filename, pool->fileline, filename, fileline);
+	}
+	for (pool = poolchain;pool;pool = pool->next)
+		List_For_Each_Entry(mem, &pool->chain, memheader_t, list)
+			_Mem_CheckSentinels((void *)((unsigned char *) mem + sizeof(memheader_t)), filename, fileline);
+#if MEMCLUMPING
+	// Baker: This is not the norm
+	for (pool = poolchain;pool;pool = pool->next)
+		for (clump = clumpchain;clump;clump = clump->chain)
+			_Mem_CheckClumpSentinels(clump, filename, fileline);
+#endif // MEMCLUMPING != 0
+}
+
+qbool Mem_IsAllocated(mempool_t *pool, const void *data)
+{
+	memheader_t *header;
+	memheader_t *target;
+
+	if (pool) {
+		// search only one pool
+		target = (memheader_t *)((unsigned char *) data - sizeof(memheader_t));
+		List_For_Each_Entry(header, &pool->chain, memheader_t, list)
+			if ( header == target )
+				return true;
+	} else {
+		// search all pools
+		for (pool = poolchain;pool;pool = pool->next)
+			if (Mem_IsAllocated(pool, data))
+				return true;
+	}
+	return false;
+}
+
+void Mem_ExpandableArray_NewArray(memexpandablearray_t *l, mempool_t *mempool, size_t recordsize, int numrecordsperarray)
+{
+	memset(l, 0, sizeof(*l));
+	l->mempool = mempool;
+	l->recordsize = recordsize;
+	l->numrecordsperarray = numrecordsperarray;
+}
+
+void Mem_ExpandableArray_FreeArray(memexpandablearray_t *l)
+{
+	size_t i;
+	if (l->maxarrays) {
+		for (i = 0;i != l->numarrays;i++)
+			Mem_Free(l->arrays[i].data);
+		Mem_Free(l->arrays);
+	}
+	memset(l, 0, sizeof(*l));
+}
+
+void *Mem_ExpandableArray_AllocRecord(memexpandablearray_t *l)
+{
+	size_t i, j;
+	for (i = 0;;i++)
+	{
+		if (i == l->numarrays)
+		{
+			if (l->numarrays == l->maxarrays)
+			{
+				memexpandablearray_array_t *oldarrays = l->arrays;
+				l->maxarrays = max(l->maxarrays * 2, 128);
+				l->arrays = (memexpandablearray_array_t*) Mem_Alloc(l->mempool, l->maxarrays * sizeof(*l->arrays));
+				if (oldarrays)
+				{
+					memcpy(l->arrays, oldarrays, l->numarrays * sizeof(*l->arrays));
+					Mem_Free(oldarrays);
+				}
+			}
+			l->arrays[i].numflaggedrecords = 0;
+			l->arrays[i].data = (unsigned char *) Mem_Alloc(l->mempool, (l->recordsize + 1) * l->numrecordsperarray);
+			l->arrays[i].allocflags = l->arrays[i].data + l->recordsize * l->numrecordsperarray;
+			l->numarrays++;
+		}
+		if (l->arrays[i].numflaggedrecords < l->numrecordsperarray)
+		{
+			for (j = 0;j < l->numrecordsperarray;j++)
+			{
+				if (!l->arrays[i].allocflags[j])
+				{
+					l->arrays[i].allocflags[j] = true;
+					l->arrays[i].numflaggedrecords++;
+					memset(l->arrays[i].data + l->recordsize * j, 0, l->recordsize);
+					return (void *)(l->arrays[i].data + l->recordsize * j);
+				}
+			}
+		}
+	}
+}
+
+/*****************************************************************************
+ * IF YOU EDIT THIS:
+ * If this function was to change the size of the "expandable" array, you have
+ * to update r_shadow.c
+ * Just do a search for "range =", R_ShadowClearWorldLights would be the first
+ * function to look at. (And also seems like the only one?) You  might have to
+ * move the  call to Mem_ExpandableArray_IndexRange  back into for(...) loop's
+ * condition
+ */
+void Mem_ExpandableArray_FreeRecord(memexpandablearray_t *l, void *record) // const!
+{
+	size_t i, j;
+	unsigned char *p = (unsigned char *)record;
+	for (i = 0;i != l->numarrays;i++)
+	{
+		if (p >= l->arrays[i].data && p < (l->arrays[i].data + l->recordsize * l->numrecordsperarray))
+		{
+			j = (p - l->arrays[i].data) / l->recordsize;
+			if (p != l->arrays[i].data + j * l->recordsize)
+				Sys_Error ("Mem_ExpandableArray_FreeRecord: no such record %p", (void *)p);
+			if (!l->arrays[i].allocflags[j])
+				Sys_Error ("Mem_ExpandableArray_FreeRecord: record %p is already free!", (void *)p);
+			l->arrays[i].allocflags[j] = false;
+			l->arrays[i].numflaggedrecords--;
+			return;
+		}
+	}
+}
+
+size_t Mem_ExpandableArray_IndexRange(const memexpandablearray_t *l)
+{
+	size_t i, j, k, end = 0;
+	for (i = 0;i < l->numarrays;i++)
+	{
+		for (j = 0, k = 0;k < l->arrays[i].numflaggedrecords;j++)
+		{
+			if (l->arrays[i].allocflags[j])
+			{
+				end = l->numrecordsperarray * i + j + 1;
+				k++;
+			}
+		}
+	}
+	return end;
+}
+
+void *Mem_ExpandableArray_RecordAtIndex(const memexpandablearray_t *l, size_t index)
+{
+	size_t i, j;
+	i = index / l->numrecordsperarray;
+	j = index % l->numrecordsperarray;
+	if (i >= l->numarrays || !l->arrays[i].allocflags[j])
+		return NULL;
+	return (void *)(l->arrays[i].data + j * l->recordsize);
+}
+
+
+// used for temporary memory allocations around the engine, not for longterm
+// storage, if anything in this pool stays allocated during gameplay, it is
+// considered a leak
+mempool_t *tempmempool;
+// only for zone
+mempool_t *zonemempool;
+mempool_t *consolemempool;
+mempool_t *historymempool;
+mempool_t *cmdcvarmempool;
+mempool_t *keysmempool;
+
+
+
+void Mem_PrintStats(void)
+{
+	size_t count = 0, size = 0, realsize = 0;
+	mempool_t *pool;
+	memheader_t *mem;
+	Mem_CheckSentinelsGlobal();
+	for (pool = poolchain;pool;pool = pool->next) {
+		count++;
+		size += pool->totalsize;
+		realsize += pool->realsize;
+	}
+#if 1
+	Con_PrintLinef ("%lu memory pools, totalling %s bytes (%.3fMB)", (unsigned long)count, 
+		String_Num_To_Thousands_Sbuf(size), size / 1048576.0);
+	Con_PrintLinef ("total allocated size: %s bytes (%.3fMB)", String_Num_To_Thousands_Sbuf(realsize), realsize / 1048576.0);
+#else
+	Con_PrintLinef ("%lu memory pools, totalling %lu bytes (%.3fMB)", (unsigned long)count, (unsigned long)size, size / 1048576.0);
+	Con_PrintLinef ("total allocated size: %lu bytes (%.3fMB)", (unsigned long)realsize, realsize / 1048576.0);
+#endif
+	for (pool = poolchain; pool; pool = pool->next) {
+		if (Have_Flag(pool->memflags, POOLFLAG_TEMP) && !List_Is_Empty(&pool->chain)) {
+			Con_PrintLinef ("Memory pool %p has sprung a leak totalling %lu bytes (%.3fMB)!  Listing contents...", (void *)pool, (unsigned long)pool->totalsize, pool->totalsize / 1048576.0);
+			List_For_Each_Entry(mem, &pool->chain, memheader_t, list)
+				Con_PrintLinef ("%10lu bytes allocated at %s:%d", (unsigned long)mem->size, mem->filename, mem->fileline);
+		}
+	}
+}
+
+#define MEMPOOL_NAME_NONE_NULL	NULL
+void Mem_PrintList(size_t minallocationsize, ccs *mempool_name_wanted)
+{
+	mempool_t *pool;
+	memheader_t *mem;
+	Mem_CheckSentinelsGlobal();
+	Con_PrintLinef ("memory pool list:" NEWLINE
+					"size    name");
+	for (pool = poolchain;pool;pool = pool->next) {
+		if (mempool_name_wanted && !String_Match_Caseless(pool->name, mempool_name_wanted))
+			continue;
+
+		// Working this pool
+		int num_allocations = 0;
+		List_For_Each_Entry(mem, &pool->chain, memheader_t, list) {
+			num_allocations ++;
+		} // for
+
+		Con_PrintLinef ("%10luk (%10luk actual) %s (%+li byte change) %s (%d = num allocations)", 
+			(unsigned long)((pool->totalsize + 1023) / 1024), 
+			(unsigned long)((pool->realsize + 1023) / 1024), 
+			pool->name, 
+			(long)(pool->totalsize - pool->lastchecksize), 
+			Have_Flag (pool->memflags, POOLFLAG_TEMP) ? "TEMP" : "",
+			num_allocations
+		);
+		pool->lastchecksize = pool->totalsize;
+		
+		// Working this pool
+		int num_printed = 0;
+		List_For_Each_Entry(mem, &pool->chain, memheader_t, list) {
+			if (mem->size >= minallocationsize) {
+#ifdef _DEBUG
+				Con_PrintLinef ("%10lu bytes allocated at %s:%d ITER=%d", 
+					(unsigned long)mem->size, 
+					mem->filename, 
+					mem->fileline,
+					mem->iterxy
+				);
+#else
+				Con_PrintLinef ("%10lu bytes allocated at %s:%d", 
+					(unsigned long)mem->size, 
+					mem->filename, 
+					mem->fileline
+				);
+#endif
+				num_printed ++;
+			}
+		} // for
+		if (num_printed)
+			Con_PrintLinef ("%d printed", num_printed);
+	} // for pool
+}
+
+
+static void MemList_f(cmd_state_t *cmd)
+{
+	// Baker: Looks like "memlist 1" prints a bit of detail
+	// and "memlist 2" prints it with smaller allocations
+	// No ... it is number of argc ... wtf
+	ccs *arg1_kb_minimum = cmd_argv_parm1;
+	ccs *arg2_mempool	 = cmd_argv_parm2;
+	switch(cmd_argc)
+	{
+	case 1: // No args
+		Mem_PrintList (1<<30, MEMPOOL_NAME_NONE_NULL); // Looks like 1 MB -- 1,073,741,824
+		Mem_PrintStats();
+		break;
+
+	case 2: // 1 arg - Indicate size of allocation
+		Mem_PrintList(atof(arg1_kb_minimum) * 1024.0, MEMPOOL_NAME_NONE_NULL); // Oldy
+		Mem_PrintStats();
+		break;
+
+	case 3: // 2 args - zone 1k
+		Mem_PrintList(atof(arg1_kb_minimum) * 1024.0, arg2_mempool); // Oldy
+		Mem_PrintStats();
+		break;
+
+	default:
+		Con_PrintLinef ("MemList_f: unrecognized options" NEWLINE "usage: memlist [all]");
+		break;
+	}
+}
+
+static void MemStats_f(cmd_state_t *cmd)
+{
+	Mem_CheckSentinelsGlobal();
+	Mem_PrintStats();
+}
+
+char *_Mem_strdupf(mempool_t *pool, ccs *filename, int fileline, ccs *fmt, ...)
+{
+	VA_EXPAND_ALLOC (text, text_slen, bufsiz, fmt);
+	char *out = _Mem_strdup (pool, text, filename, fileline);
+	VA_EXPAND_ALLOC_FREE (text);
+	return out;
+}
+
+char *_Mem_strdup (mempool_t *pool, ccs *s, ccs *filename, int fileline)
+{
+	char *p;
+	size_t sz;
+	if (s == NULL)
+		return NULL;
+	sz = strlen (s) + 1;
+	p = (char *)_Mem_Alloc (pool, NULL, sz, ALIGN_SIZE_16, filename, fileline);
+	strlcpy (p, s, sz);
+	return p;
+}
+
+/*
+========================
+Memory_Init
+========================
+*/
+void Memory_Init (void)
+{
+	static union {unsigned short s;unsigned char b[2];} u;
+	u.s = 0x100;
+	mem_bigendian = u.b[0] != 0;
+
+	sentinel_seed = rand();
+	poolchain = NULL;
+	tempmempool = Mem_AllocPool("Temporary Memory", POOLFLAG_TEMP, NULL);
+	zonemempool = Mem_AllocPool("Zone", /*flags*/ 0, /*parent*/ NULL);
+	consolemempool = Mem_AllocPool("Console", 0, NULL);
+	historymempool = Mem_AllocPool("History", 0, NULL);
+	keysmempool = Mem_AllocPool("Keys", 0, NULL);
+	cmdcvarmempool = Mem_AllocPool("CmdCvar", 0, NULL);
+
+	if (Thread_HasThreads())
+		mem_mutex = Thread_CreateMutex();
+}
+
+void Memory_Shutdown (void)
+{
+//	Mem_FreePool (&zonemempool);
+//	Mem_FreePool (&tempmempool);
+
+	if (mem_mutex)
+		Thread_DestroyMutex(mem_mutex);
+	mem_mutex = NULL;
+}
+//
+// BAKER SECTION
+//
+
+#if 0 // Works, allows pool specified .. no one calls me old Brushfacer command used to
+char *Mem_strdupf (mempool_t *pool, const char *fmt, ...)
+{
+	VA_EXPAND_ALLOC (text, text_slen, bufsiz, fmt);
+	char *out = (char *)Mem_strdup(pool, text);
+
+	VA_EXPAND_ALLOC_FREE (text);
+	return out;
+}
+#endif
+
+RELATED_ (_Mem_Alloc)
+void *Mem_Dup_Z (mempool_t *mempool, const void *src, size_t len) // KILL_THIS_NOW
+{
+	size_t bufsize_made = len + 1; // Baker: May 28 2025 size_t used by _Mem_Alloc
+	byte *membuf = (byte *) Mem_Alloc(mempool, bufsize_made);
+	memcpy (membuf, src, len);
+	membuf[len] = 0;
+	return membuf;
+}
+
+char *Z_StrDupf (ccs *fmt, ...)
+{
+	VA_EXPAND_ALLOC (text, text_slen, bufsiz, fmt);
+	char *out = Z_StrDup (text);
+	VA_EXPAND_ALLOC_FREE (text);
+	return out;
+}
+
+char *T_StrDupf (ccs *fmt, ...)
+{
+	VA_EXPAND_ALLOC (text, text_slen, bufsiz, fmt);
+	char *out = T_StrDup (text);
+	VA_EXPAND_ALLOC_FREE (text);
+	return out;
+}
+
+
+RELATED_ (Z_StrDup_Realloc Z_StrDup_Len_Z)
+void Z_StrDup_Realloc (char **ps, ccs *s)
+{
+	//size_t slen = strlen(s);
+	if (*ps) {
+		Z_FreeNull_ (*ps);
+	}
+	(*ps) = Z_StrDup (s);
+}
+
+void Z_StrDupf_Realloc (char **ps, ccs *fmt, ...)
+{
+	VA_EXPAND_ALLOC (text, text_slen, bufsiz, fmt);
+	if (*ps) {
+		Z_FreeNull_ (*ps);
+	}
+	(*ps) = Z_StrDup_Len_Z (text, text_slen);
+
+	VA_EXPAND_ALLOC_FREE (text);
+}
+
+RELATED_ (Z_StrDup_Len_Z)
+void Z_StrDup_Len_Z_Realloc (char **ps, ccs *s, size_t slen)
+{
+	if (*ps) {
+		Z_FreeNull_ (*ps);
+	}
+	(*ps) = Z_StrDup_Len_Z (s, slen);
+}
+
+RELATED_ (String_Repeat_Alloc)
+char *Z_StrRepeat_Z (char ch, int count)
+{
+	//size_t sizealloc = count + ONE_SIZEOF_NULL_TERM_1;
+	char *sout = (char *)Mem_Alloc (zonemempool, count + ONE_SIZEOF_NULL_TERM_1);
+	memset (&sout[0], ch, count);
+
+	return sout;
+}
+
+// END BAKER
+
+void Memory_InitOnce_Commands (void)
+{
+	Cmd_AddCommand(CF_SHARED, "memstats", MemStats_f, "prints memory system statistics");
+	Cmd_AddCommand(CF_SHARED, "memlist", MemList_f, "prints memory pool information (or if used as memlist 5 lists individual allocations of 5K or larger, 0 lists all allocations)");
+
+	Cvar_RegisterVariable (&developer_memory);
+	Cvar_RegisterVariable (&developer_memorydebug);
+	Cvar_RegisterVariable (&developer_memoryreportlargerthanmb);
+	Cvar_RegisterVariable (&sys_memsize_physical);
+	Cvar_RegisterVariable (&sys_memsize_virtual);
+
+#if defined(_WIN32)
+#ifdef _WIN64
+	{
+		MEMORYSTATUSEX status;
+		// first guess
+		Cvar_SetValueQuick(&sys_memsize_virtual, 8388608);
+		// then improve
+		status.dwLength = sizeof(status);
+		if (GlobalMemoryStatusEx(&status))
+		{
+			Cvar_SetValueQuick(&sys_memsize_physical, status.ullTotalPhys / 1048576.0);
+			Cvar_SetValueQuick(&sys_memsize_virtual, min(sys_memsize_virtual.value, status.ullTotalVirtual / 1048576.0));
+		}
+	}
+#else // !_WIN64 but _WIN32 ...
+	{
+		MEMORYSTATUS status;
+		// first guess
+		Cvar_SetValueQuick(&sys_memsize_virtual, 2048);
+		// then improve
+		status.dwLength = sizeof(status);
+		GlobalMemoryStatus(&status);
+		Cvar_SetValueQuick(&sys_memsize_physical, status.dwTotalPhys / 1048576.0);
+		Cvar_SetValueQuick(&sys_memsize_virtual, min(sys_memsize_virtual.value, status.dwTotalVirtual / 1048576.0));
+	}
+#endif // end of ! _WIN64 segment
+#else // Not _WIN32
+	{
+		// first guess
+		Cvar_SetValueQuick(&sys_memsize_virtual, (sizeof(void*) == 4) ? 2048 : 268435456);
+		// then improve
+		{
+			// Linux, and BSD with linprocfs mounted
+			FILE *f = fopen("/proc/meminfo", "r");
+			if (f)
+			{
+				static char buf[1024];
+				while(fgets(buf, sizeof(buf), f))
+				{
+					const char *p = buf;
+					if (!COM_ParseToken_Console(&p))
+						continue;
+					if (String_Match(com_token, "MemTotal:"))
+					{
+						if (!COM_ParseToken_Console(&p))
+							continue;
+						Cvar_SetValueQuick(&sys_memsize_physical, atof(com_token) / 1024.0);
+					}
+					if (String_Match(com_token, "SwapTotal:"))
+					{
+						if (!COM_ParseToken_Console(&p))
+							continue;
+						Cvar_SetValueQuick(&sys_memsize_virtual, min(sys_memsize_virtual.value , atof(com_token) / 1024.0 + sys_memsize_physical.value));
+					}
+				}
+				fclose(f);
+			}
+		}
+	}
+#endif // End of defined(_WIN32) - the ! _WIN32 else segment
+}
+

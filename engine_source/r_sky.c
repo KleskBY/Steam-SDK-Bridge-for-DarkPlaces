@@ -1,0 +1,482 @@
+// r_sky.c
+
+#include "quakedef.h"
+#include "image.h"
+
+// FIXME: fix skybox after vid_restart
+cvar_t r_sky = {CF_CLIENT | CF_ARCHIVE, "r_sky", "1", "enables sky rendering (black otherwise)"};
+cvar_t r_skyscroll1 = {CF_CLIENT | CF_ARCHIVE, "r_skyscroll1", "1", "speed at which upper clouds layer scrolls in quake sky"};
+cvar_t r_skyscroll2 = {CF_CLIENT | CF_ARCHIVE, "r_skyscroll2", "2", "speed at which lower clouds layer scrolls in quake sky"};
+cvar_t r_sky_scissor = {CF_CLIENT, "r_sky_scissor", "1", "limit rendering of sky to approximately the area of the sky surfaces"};
+int skyrenderlater;
+int skyrendermasked;
+int skyscissor[4];
+
+static int skyrendersphere;
+static int skyrenderbox;
+static rtexturepool_t *skytexturepool;
+char g_skyname[MAX_QPATH_128];
+static matrix4x4_t skymatrix;
+static matrix4x4_t skyinversematrix;
+
+typedef struct suffixinfo_s
+{
+	const char *suffix;
+	qbool flipx, flipy, flipdiagonal;
+}
+suffixinfo_t;
+static const suffixinfo_t suffix[3][6] =
+{
+	{
+		{"px",   false, false, false},
+		{"nx",   false, false, false},
+		{"py",   false, false, false},
+		{"ny",   false, false, false},
+		{"pz",   false, false, false},
+		{"nz",   false, false, false}
+	},
+	{
+		{"posx", false, false, false},
+		{"negx", false, false, false},
+		{"posy", false, false, false},
+		{"negy", false, false, false},
+		{"posz", false, false, false},
+		{"negz", false, false, false}
+	},
+	{
+		{"rt",   false, false,  true},
+		{"lf",    true,  true,  true},
+		{"bk",   false,  true, false},
+		{"ft",    true, false, false},
+		{"up",   false, false,  true},
+		{"dn",   false, false,  true}
+	}
+};
+
+static skinframe_t *skyboxskinframe[6];
+
+void R_SkyStartFrame(void)
+{
+	skyrendersphere = false;
+	skyrenderbox = false;
+	skyrendermasked = false;
+	// for depth-masked sky, we need to know whether any sky was rendered
+	skyrenderlater = false;
+	// we can scissor the sky to just the relevant area
+	Vector4Clear(skyscissor);
+	if (r_sky.integer /*d: 1*/) {
+		if (skyboxskinframe[0] || skyboxskinframe[1] || skyboxskinframe[2] || skyboxskinframe[3] || skyboxskinframe[4] || skyboxskinframe[5])
+			skyrenderbox = true;
+		else if (r_refdef.scene.worldmodel && r_refdef.scene.worldmodel->brush.solidskyskinframe)
+			skyrendersphere = true;
+		skyrendermasked = true;
+	}
+}
+
+/*
+==================
+R_SetSkyBox
+==================
+*/
+static void R_UnloadSkyBox(void)
+{
+	int i;
+	int c = 0;
+	for (i = 0;i < 6; i ++) {
+		if (skyboxskinframe[i]) {
+			R_SkinFrame_PurgeSkinFrame (skyboxskinframe[i]); // s->base, s->glow = NULL, s->loadsequence = 0 etc.
+			c++;
+		}
+		skyboxskinframe[i] = NULL;
+	}
+	if (c && developer_loading.integer)
+		Con_PrintLinef ("unloading skybox");
+}
+
+static int R_LoadSkyBox(void)
+{
+	int i, j, success;
+	int indices[4] = {0,1,2,3};
+	char name[MAX_INPUTLINE_16384];
+	unsigned char *image_buffer;
+	unsigned char *temp;
+	char vabuf[1024];
+
+	R_UnloadSkyBox();
+
+	if (!g_skyname[0])
+		return true;
+
+	for (j = 0; j < 3; j ++) {
+		success = 0;
+		for (i = 0; i < 6; i ++) {
+			if (dpsnprintf(name, sizeof(name), "%s_%s", g_skyname, suffix[j][i].suffix) < 0 || !(image_buffer = loadimagepixelsbgra(name, q_tx_complain_false, q_tx_allowfixtrans_false, q_tx_convertsrgb_false, NULL))) {
+				if (dpsnprintf(name, sizeof(name), "%s%s", g_skyname, suffix[j][i].suffix) < 0 || !(image_buffer = loadimagepixelsbgra(name, q_tx_complain_false, q_tx_allowfixtrans_false, q_tx_convertsrgb_false, NULL))) {
+					if (dpsnprintf(name, sizeof(name), "env/%s%s", g_skyname, suffix[j][i].suffix) < 0 || !(image_buffer = loadimagepixelsbgra(name, q_tx_complain_false, q_tx_allowfixtrans_false, q_tx_convertsrgb_false, NULL))) {
+						if (dpsnprintf(name, sizeof(name), "gfx/env/%s%s", g_skyname, suffix[j][i].suffix) < 0 || !(image_buffer = loadimagepixelsbgra(name, q_tx_complain_false, q_tx_allowfixtrans_false, q_tx_convertsrgb_false, NULL)))
+							continue;
+					} // if
+				} // if
+			} // if
+			temp = (unsigned char *)Mem_Alloc(tempmempool, image_width*image_height*4);
+			Image_CopyMux (temp, image_buffer, image_width, image_height, suffix[j][i].flipx, suffix[j][i].flipy, suffix[j][i].flipdiagonal, 4, 4, indices);
+			skyboxskinframe[i] = R_SkinFrame_LoadInternalBGRA(va(vabuf, sizeof(vabuf), "skyboxside%d", i), TEXF_CLAMP | (gl_texturecompression_sky.integer ? TEXF_COMPRESS : 0), temp, image_width, image_height, 0, 0, 0, vid.sRGB3D, q_is_sky_load_false);
+			Mem_Free(image_buffer);
+			Mem_Free(temp);
+			success++;
+		} // for i 6
+
+		if (success)
+			break;
+	} // for j 3
+
+	if (j == 3)
+		return false;
+
+	if (developer_loading.integer)
+		Con_PrintLinef ("loading skybox " QUOTED_S, name);
+
+	return true;
+}
+
+int R_SetSkyBox(const char *sky)
+{
+	if (String_Match(sky, g_skyname)) // no change
+		return true;
+
+	if (strlen(sky) > 1000)
+	{
+		Con_PrintLinef ("sky name too long (%d, max is 1000)", (int)strlen(sky));
+		return false;
+	}
+
+	c_strlcpy (g_skyname, sky);
+
+	return R_LoadSkyBox();
+}
+
+// LadyHavoc: added LoadSky console command
+static void LoadSky_f(cmd_state_t *cmd)
+{
+//	int argc = cmd_argc;
+	ccs *arg1 = cmd_argv_parm1;
+//	ccs *arg2 = cmd_argv_parm2;
+
+	switch (cmd_argc) {
+	case 1: // "sky" with no args
+		if (g_skyname[0])
+			Con_PrintLinef ("current sky: %s", g_skyname);
+		else
+			Con_PrintLinef ("no skybox has been set");
+		break;
+#if 1
+	// Baker: We sometimes get an extra bullshit character from console autocomplete
+	// And I don't want to unravel that mystery at the moment
+	// so for now ... this is workaround
+	default:
+#else
+	case 2: // "sky" with 1 arg
+#endif
+		// Baker r1451: reduce spam to console, the skybox messages were printing during single player games
+		// for games like Nehahra when they change the sky, made this dprint
+		if (R_SetSkyBox(arg1)) {
+			if (g_skyname[0])
+				Con_DPrintLinef ("skybox set to %s", g_skyname);
+			else
+				Con_DPrintLinef ("skybox disabled");
+		}
+		else
+			Con_PrintLinef (CON_ERROR "failed to load skybox %s", Cmd_Argv(cmd, 1));
+		break;
+#if 0
+	default:
+		Con_PrintLinef ("usage: loadsky skyname");
+		break;
+#endif
+	}
+}
+
+static const float skyboxvertex3f[6*4*3] =
+{
+	// skyside[0]
+	 16, -16,  16,
+	 16, -16, -16,
+	 16,  16, -16,
+	 16,  16,  16,
+	// skyside[1]
+	-16,  16,  16,
+	-16,  16, -16,
+	-16, -16, -16,
+	-16, -16,  16,
+	// skyside[2]
+	 16,  16,  16,
+	 16,  16, -16,
+	-16,  16, -16,
+	-16,  16,  16,
+	// skyside[3]
+	-16, -16,  16,
+	-16, -16, -16,
+	 16, -16, -16,
+	 16, -16,  16,
+	// skyside[4]
+	-16, -16,  16,
+	 16, -16,  16,
+	 16,  16,  16,
+	-16,  16,  16,
+	// skyside[5]
+	 16, -16, -16,
+	-16, -16, -16,
+	-16,  16, -16,
+	 16,  16, -16
+};
+
+static const float skyboxtexcoord2f[6*4*2] =
+{
+	// skyside[0]
+	0, 1,
+	1, 1,
+	1, 0,
+	0, 0,
+	// skyside[1]
+	1, 0,
+	0, 0,
+	0, 1,
+	1, 1,
+	// skyside[2]
+	1, 1,
+	1, 0,
+	0, 0,
+	0, 1,
+	// skyside[3]
+	0, 0,
+	0, 1,
+	1, 1,
+	1, 0,
+	// skyside[4]
+	0, 1,
+	1, 1,
+	1, 0,
+	0, 0,
+	// skyside[5]
+	0, 1,
+	1, 1,
+	1, 0,
+	0, 0
+};
+
+static const int skyboxelement3i[6*2*3] =
+{
+	// skyside[3]
+	 0,  1,  2,
+	 0,  2,  3,
+	// skyside[1]
+	 4,  5,  6,
+	 4,  6,  7,
+	// skyside[0]
+	 8,  9, 10,
+	 8, 10, 11,
+	// skyside[2]
+	12, 13, 14,
+	12, 14, 15,
+	// skyside[4]
+	16, 17, 18,
+	16, 18, 19,
+	// skyside[5]
+	20, 21, 22,
+	20, 22, 23
+};
+
+static const unsigned short skyboxelement3s[6*2*3] =
+{
+	// skyside[3]
+	 0,  1,  2,
+	 0,  2,  3,
+	// skyside[1]
+	 4,  5,  6,
+	 4,  6,  7,
+	// skyside[0]
+	 8,  9, 10,
+	 8, 10, 11,
+	// skyside[2]
+	12, 13, 14,
+	12, 14, 15,
+	// skyside[4]
+	16, 17, 18,
+	16, 18, 19,
+	// skyside[5]
+	20, 21, 22,
+	20, 22, 23
+};
+
+CALLERS_ (R_Sky R_RenderScene R_RenderView)
+static void R_SkyBox(void)
+{
+	int i;
+	RSurf_ActiveCustomEntity(&skymatrix, &skyinversematrix, 0, 0, 1, 1, 1, 1, 6*4, skyboxvertex3f, skyboxtexcoord2f, NULL, NULL, NULL, NULL, 6*2, skyboxelement3i, skyboxelement3s, false, false);
+	for (i = 0;i < 6;i++)
+		if (skyboxskinframe[i])
+			R_DrawCustomSurface(skyboxskinframe[i], &identitymatrix, MATERIALFLAG_SKY | MATERIALFLAG_FULLBRIGHT | MATERIALFLAG_NOCULLFACE | MATERIALFLAG_NODEPTHTEST, i*4, 4, i*2, 2, false, false, false);
+}
+
+#define skygridx 32
+#define skygridx1 (skygridx + 1)
+#define skygridxrecip (1.0f / (skygridx))
+#define skygridy 32
+#define skygridy1 (skygridy + 1)
+#define skygridyrecip (1.0f / (skygridy))
+#define skysphere_numverts (skygridx1 * skygridy1)
+#define skysphere_numtriangles (skygridx * skygridy * 2)
+static float skysphere_vertex3f[skysphere_numverts * 3];
+static float skysphere_texcoord2f[skysphere_numverts * 2];
+static int skysphere_element3i[skysphere_numtriangles * 3];
+static unsigned short skysphere_element3s[skysphere_numtriangles * 3];
+
+static void skyspherecalc(void)
+{
+	int i, j;
+	unsigned short *e;
+	float a, b, x, ax, ay, v[3], length, *vertex3f, *texcoord2f;
+	float dx, dy, dz;
+	dx = 16.0f;
+	dy = 16.0f;
+	dz = 16.0f / 3.0f;
+	vertex3f = skysphere_vertex3f;
+	texcoord2f = skysphere_texcoord2f;
+	for (j = 0;j <= skygridy;j++)
+	{
+		a = j * skygridyrecip;
+		ax = cos(a * M_PI * 2);
+		ay = -sin(a * M_PI * 2);
+		for (i = 0;i <= skygridx;i++)
+		{
+			b = i * skygridxrecip;
+			x = cos((b + 0.5) * M_PI);
+			v[0] = ax*x * dx;
+			v[1] = ay*x * dy;
+			v[2] = -sin((b + 0.5) * M_PI) * dz;
+			length = 3.0f / sqrt(v[0]*v[0]+v[1]*v[1]+(v[2]*v[2]*9));
+			*texcoord2f++ = v[0] * length;
+			*texcoord2f++ = v[1] * length;
+			*vertex3f++ = v[0];
+			*vertex3f++ = v[1];
+			*vertex3f++ = v[2];
+		}
+	}
+	e = skysphere_element3s;
+	for (j = 0;j < skygridy;j++)
+	{
+		for (i = 0;i < skygridx;i++)
+		{
+			*e++ =  j      * skygridx1 + i;
+			*e++ =  j      * skygridx1 + i + 1;
+			*e++ = (j + 1) * skygridx1 + i;
+
+			*e++ =  j      * skygridx1 + i + 1;
+			*e++ = (j + 1) * skygridx1 + i + 1;
+			*e++ = (j + 1) * skygridx1 + i;
+		}
+	}
+	for (i = 0;i < skysphere_numtriangles*3;i++)
+		skysphere_element3i[i] = skysphere_element3s[i];
+}
+
+// Baker: This is Q1 sky without a skybox
+static void R_SkySphere(void)
+{
+	double speedscale;
+	static qbool skysphereinitialized = false;
+	matrix4x4_t scroll1matrix, scroll2matrix;
+	if (!skysphereinitialized)
+	{
+		skysphereinitialized = true;
+		skyspherecalc();
+	}
+
+	// wrap the scroll values just to be extra kind to float accuracy
+
+	// scroll speed for upper layer
+	speedscale = r_refdef.scene.time*r_skyscroll1.value*8.0/128.0;
+	speedscale -= floor(speedscale);
+	Matrix4x4_CreateTranslate(&scroll1matrix, speedscale, speedscale, 0);
+	// scroll speed for lower layer (transparent layer)
+	speedscale = r_refdef.scene.time*r_skyscroll2.value*8.0/128.0;
+	speedscale -= floor(speedscale);
+	Matrix4x4_CreateTranslate(&scroll2matrix, speedscale, speedscale, 0);
+
+	RSurf_ActiveCustomEntity(&skymatrix, &skyinversematrix, 0, 0, 1, 1, 1, 1, skysphere_numverts, skysphere_vertex3f, skysphere_texcoord2f, NULL, NULL, NULL, NULL, skysphere_numtriangles, skysphere_element3i, skysphere_element3s, false, false);
+	R_DrawCustomSurface(r_refdef.scene.worldmodel->brush.solidskyskinframe, &scroll1matrix, MATERIALFLAG_SKY | MATERIALFLAG_FULLBRIGHT | MATERIALFLAG_NOCULLFACE | MATERIALFLAG_NODEPTHTEST                                            , 0, skysphere_numverts, 0, skysphere_numtriangles, false, false, false);
+	R_DrawCustomSurface(r_refdef.scene.worldmodel->brush.alphaskyskinframe, &scroll2matrix, MATERIALFLAG_SKY | MATERIALFLAG_FULLBRIGHT | MATERIALFLAG_NOCULLFACE | MATERIALFLAG_NODEPTHTEST | MATERIALFLAG_ALPHA | MATERIALFLAG_BLENDED, 0, skysphere_numverts, 0, skysphere_numtriangles, false, false, false);
+}
+
+void R_Sky(void)
+{
+	Matrix4x4_CreateFromQuakeEntity(&skymatrix, r_refdef.view.origin[0], r_refdef.view.origin[1], r_refdef.view.origin[2], 0, 0, 0, r_refdef.farclip * (0.5f / 16.0f));
+	Matrix4x4_Invert_Simple(&skyinversematrix, &skymatrix);
+
+	// Baker: r_sky_scissor default is 1
+	if (r_sky_scissor.integer /*d: 1*/) {
+		// if the scissor is empty just return
+		if (skyscissor[2] == 0 || skyscissor[3] == 0)
+			return;
+		GL_Scissor(skyscissor[0], skyscissor[1], skyscissor[2], skyscissor[3]);
+		GL_ScissorTest(true);
+	}
+	if (skyrendersphere) {
+		// this does not modify depth buffer
+		R_SkySphere();
+	}
+	else if (skyrenderbox) {
+		// this does not modify depth buffer
+		R_SkyBox();
+	}
+	/* this will be skyroom someday
+	else
+	{
+		// this modifies the depth buffer so we have to clear it afterward
+		//R_SkyRoom();
+		// clear the depthbuffer that was used while rendering the skyroom
+		//GL_Clear(GL_DEPTH_BUFFER_BIT);
+	}
+	*/
+	GL_Scissor(0, 0, r_fb.screentexturewidth, r_fb.screentextureheight);
+}
+
+//===============================================================
+
+void R_ResetSkyBox(void)
+{
+	R_UnloadSkyBox();
+	memset (g_skyname,0,MAX_QPATH_128);
+	R_LoadSkyBox();
+}
+
+static void r_sky_start(void)
+{
+	skytexturepool = R_AllocTexturePool();
+	R_LoadSkyBox();
+}
+
+static void r_sky_shutdown(void)
+{
+	R_UnloadSkyBox();
+	R_FreeTexturePool(&skytexturepool);
+}
+
+static void r_sky_newmap(void)
+{
+}
+
+
+void R_Sky_Init(void)
+{
+	Cmd_AddCommand (CF_CLIENT, "loadsky", &LoadSky_f, "load a skybox by basename (for example loadsky mtnsun_ loads mtnsun_ft.tga and so on)");
+	Cmd_AddCommand (CF_CLIENT, "sky", &LoadSky_f, "load a skybox by basename (for example loadsky mtnsun_ loads mtnsun_ft.tga and so on) [Zircon]"); //  Baker r1242: "sky" same as loadsky command
+	Cvar_RegisterVariable (&r_sky);
+	Cvar_RegisterVariable (&r_skyscroll1);
+	Cvar_RegisterVariable (&r_skyscroll2);
+	Cvar_RegisterVariable (&r_sky_scissor);
+	memset(&skyboxskinframe, 0, sizeof(skyboxskinframe));
+	g_skyname[0] = 0;
+	R_RegisterModule("R_Sky", r_sky_start, r_sky_shutdown, r_sky_newmap, NULL, NULL);
+}
+

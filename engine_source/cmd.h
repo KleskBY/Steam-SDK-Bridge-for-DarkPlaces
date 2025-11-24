@@ -1,0 +1,404 @@
+/*
+Copyright (C) 1996-1997 Id Software, Inc.
+
+This program is free software; you can redistribute it and/or
+modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2
+of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program; if not, write to the Free Software
+Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+
+*/
+
+// cmd.h -- Command buffer and command execution
+
+//===========================================================================
+
+/*
+
+Any number of commands can be added in a frame, from several different sources.
+Most commands come from either keybindings or console line input, but remote
+servers can also send across commands and entire text files can be execed.
+
+The + command line options are also added to the command buffer.
+
+The game starts with a Cbuf_AddTextLine ("exec quake.rc"); Cbuf_Execute ();
+
+*/
+
+#ifndef CMD_H
+#define CMD_H
+
+#include "qtypes.h"
+#include "qdefs.h"
+#include "com_list.h"
+
+struct cmd_state_s;
+
+// Command flags
+
+RELATED_ (CL_SetupWorldModel, SV_SpawnServer)
+#define CL_RESETNEWMAP_0		0		// Baker: Informational.  Make sure is reset in CL_SetupWorldModel
+#define SV_RESETNEWMAP_0		0		//
+
+#define CF_NONE 0
+#define CF_CLIENT               (1<<0)  // 1	cvar/command that only the client can change/execute
+#define CF_SERVER               (1<<1)  // 2	cvar/command that only the server can change/execute
+#define CF_CLIENT_FROM_SERVER   (1<<2)  // 4	command that the server is allowed to execute on the client
+#define CF_SERVER_FROM_CLIENT   (1<<3)  // 8	command the client is allowed to execute on the server as a stringcmd
+#define CF_CHEAT                (1<<4)  // 16	command or cvar that gives an unfair advantage over other players and is blocked unless sv_cheats is 1
+#define CF_ARCHIVE              (1<<5)  // 32	cvar should have its set value saved to config.cfg and persist across sessions
+#define CF_READONLY             (1<<6)  // 64	cvar cannot be changed from the console or the command buffer
+#define CF_NOTIFY               (1<<7)  // 128	cvar should trigger a chat notification to all connected clients when changed
+#define CF_SERVERINFO           (1<<8)  // 256	command or cvar relevant to serverinfo string handling
+#define CF_USERINFO             (1<<9)  // 512	command or cvar used to communicate userinfo to the server
+#define CF_PERSISTENT           (1<<10) // 1024	cvar must not be reset on gametype switch (such as scr_screenshot_name, which otherwise isn't set to the mod name properly)
+#define CF_PRIVATE              (1<<11) // 2048	cvar should not be $ expanded or sent to the server under any circumstances (rcon_password, etc)
+
+// Baker r1003: close console for map/load/etc.
+// some commands are intended to close the console like "map", "changelevel", "kill", "load" <a save game>, "connect", "reconnect"
+// if done on the client
+#define CF_CLIENTCLOSECONSOLE   0 //(1<<12)
+
+#define CF_MAXFLAGSVAL          ((1<<12) - 1)    // used to determine if flags is valid (Baker: 4095)
+// for internal use only!
+#define CF_REGISTERED (1<<29)  // created by Cvar_RegisterVariable()
+#define CF_DEFAULTSET (1<<30)
+#define CF_ALLOCATED (1<<31)   // created by Cvar_Get() (console or QC)
+
+#define CF_SHARED (CF_CLIENT | CF_SERVER) // 3
+
+typedef void(*xcommand_t) (struct cmd_state_s *cmd);
+
+typedef enum cmd_source_s
+{
+	src_client,		///< came in over a net connection as a clc_stringcmd
+					///< host_client will be valid during this state.
+	src_local		///< from the command buffer
+} cmd_source_t;
+
+typedef struct cmd_alias_s
+{
+	struct cmd_alias_s *next;
+	char name[MAX_ALIAS_NAME_32];
+	char *value;
+	qbool initstate; // indicates this command existed at init
+	char *initialvalue; // backup copy of value at init
+} cmd_alias_t;
+
+typedef struct cmd_function_s
+{
+	int flags;
+	struct cmd_function_s *next;
+	const char *name;
+	const char *description;
+	xcommand_t function;
+	qbool qcfunc;
+	struct cmd_function_s *overridden; // the engine cmd overriden by this QC cmd, if applicable
+	qbool autofunc;
+	qbool initstate; // indicates this command existed at init
+} cmd_function_t;
+
+/// container for user-defined QC functions and aliases, shared between different command interpreters
+typedef struct cmd_userdefined_s
+{
+	// csqc functions - this is a mess
+	cmd_function_t *qc_functions; // Baker: registercommand ("mycommand")
+
+	// aliases
+	cmd_alias_t *alias;
+}
+cmd_userdefined_t;
+
+typedef struct cmd_buf_s
+{
+	llist_t start;
+	llist_t deferred;
+	llist_t free;
+	qbool wait;
+	size_t maxsize;
+	size_t size;
+	char tokenizebuffer[CMD_TOKENIZELENGTH];
+	int tokenizebufferpos;
+	double deferred_oldtime;
+	void *lock;
+} cmd_buf_t;
+
+/// command interpreter state - the tokenizing and execution of commands, as well as pointers to which cvars and aliases they can access
+typedef struct cmd_state_s
+{
+	struct mempool_s *mempool;
+
+	int argc;
+	const char *cmdline;
+	const char *argv[MAX_ARGS_80];
+	const char *null_string;
+	const char *args;
+	cmd_source_t source;
+
+	cmd_buf_t *cbuf;
+
+	cmd_userdefined_t *userdefined; // possible csqc functions and aliases to execute
+
+	cmd_function_t *engine_functions;
+
+	struct cvar_state_s *cvars; // which cvar system is this cmd state able to access? (&cvars_all or &cvars_null)
+	int cvars_flagsmask; // which CVAR_* flags should be visible to this interpreter? (CF_CLIENT | CF_SERVER, or just CF_SERVER)
+
+	int cmd_flags; // cmd flags that identify this interpreter
+
+	qbool (*Handle)(struct cmd_state_s *, struct cmd_function_s *, ccs *, enum cmd_source_s);
+
+	// Baker: Example: cmd_serverfromclient->NotFound = Cmd_SV_NotFound;
+	// Client YOURNAME tried to SOMETHING
+	RELATED_ (Cmd_SV_NotFound)
+	qbool (*NotFound)(struct cmd_state_s *, struct cmd_function_s *, ccs *, enum cmd_source_s);
+}
+cmd_state_t;
+
+qbool Cmd_Callback(cmd_state_t *cmd, cmd_function_t *func, ccs *text, cmd_source_t src);
+qbool Cmd_CL_Callback(cmd_state_t *cmd, cmd_function_t *func, ccs *text, cmd_source_t src);
+qbool Cmd_SV_Callback(cmd_state_t *cmd, cmd_function_t *func, ccs *text, cmd_source_t src);
+qbool Cmd_SV_NotFound(cmd_state_t *cmd, cmd_function_t *func, ccs *text, cmd_source_t src);
+
+typedef struct cmd_input_s
+{
+	llist_t list;
+	cmd_state_t *source;
+	vec_t delay;
+	size_t size;
+	size_t length;
+	char *text;
+	qbool pending;
+} cmd_input_t;
+
+extern cmd_userdefined_t cmd_userdefined_all; // aliases and csqc functions
+extern cmd_userdefined_t cmd_userdefined_null; // intentionally empty
+
+// command interpreter for local commands injected by SVQC, CSQC, MQC, server or client engine code
+// uses cmddefs_all
+extern cmd_state_t *cmd_local;
+// command interpreter for server commands received over network from clients
+// uses cmddefs_null
+extern cmd_state_t *cmd_serverfromclient;
+
+extern qbool host_stuffcmdsrun;
+
+void Cbuf_Lock(cmd_buf_t *cbuf);
+void Cbuf_Unlock(cmd_buf_t *cbuf);
+
+/*! as new commands are generated from the console or keybindings,
+ * the text is added to the end of the command buffer.
+ */
+void Cbuf_AddText (cmd_state_t *cmd, ccs *text);
+void Cbuf_AddTextLine (cmd_state_t *cmd, ccs *text);
+void Cbuf_AddTextLinef (cmd_state_t *cmd, ccs *fmt, ...) DP_FUNC_PRINTF(2);
+
+/*! when a command wants to issue other commands immediately, the text is
+ * inserted at the beginning of the buffer, before any remaining unexecuted
+ * commands.
+ */
+void Cbuf_InsertText (cmd_state_t *cmd, ccs *text);
+void Cbuf_InsertTextLine (cmd_state_t *cmd, ccs *text); // Baker: March 27 2025
+
+/*! Pulls off terminated lines of text from the command buffer and sends
+ * them through Cmd_ExecuteString.  Stops when the buffer is empty.
+ * Normally called once per frame, but may be explicitly invoked.
+ * \note Do not call inside a command function!
+ */
+void Cbuf_Execute (cmd_buf_t *cbuf);
+/*! Performs deferred commands and runs Cbuf_Execute, called by Host_Frame */
+void Cbuf_Frame (cmd_buf_t *cbuf);
+
+//===========================================================================
+
+/*
+
+Command execution takes a null terminated string, breaks it into tokens,
+then searches for a command or variable that matches the first token.
+
+Commands can come from three sources, but the handler functions may choose
+to dissallow the action or forward it to a remote server if the source is
+not apropriate.
+
+*/
+
+void Cmd_InitOnce(void);
+void Cmd_Shutdown(void);
+
+// called by Host_InitOnce, this marks cvars, commands and aliases with their init values
+void Cmd_Host_Init_SaveInitState(void);
+// called by FS_GameDir_f, this restores cvars, commands and aliases to init values
+void Cmd_RestoreInitState(void);
+
+void Cmd_AddCommand(int flags, ccs *cmd_name, xcommand_t function, ccs *description);
+// called by the init functions of other parts of the program to
+// register commands and functions to call for them.
+// The cmd_name is referenced later, so it should not be in temp memory
+
+/// used by the cvar code to check for cvar / command name overlap
+qbool Cmd_Exists (cmd_state_t *cmd, ccs *cmd_name);
+
+/// attempts to match a partial command for automatic command line completion
+/// returns NULL if nothing fits
+ccs *Cmd_CompleteCommand (cmd_state_t *cmd, ccs *partial, int is_from_nothing);
+
+int Cmd_CompleteAliasCountPossible (cmd_state_t *cmd, ccs *partial, int is_from_nothing);
+
+ccs **Cmd_CompleteAliasBuildList (cmd_state_t *cmd, ccs *partial, int is_from_nothing);
+
+int Cmd_CompleteCountPossible (cmd_state_t *cmd, ccs *partial, int is_from_nothing);
+
+ccs **Cmd_CompleteBuildList (cmd_state_t *cmd, ccs *partial, int is_from_nothing);
+
+void Cmd_CompleteCommandPrint (cmd_state_t *cmd, ccs *partial, int is_from_nothing);
+
+ccs *Cmd_CompleteAlias (cmd_state_t *cmd, ccs *partial, int is_from_nothing);
+
+void Cmd_CompleteAliasPrint (cmd_state_t *cmd, ccs *partial, int is_from_nothing);
+
+// Enhanced console completion by Fett erich@heintz.com
+
+// Added by EvilTypeGuy eviltypeguy@qeradiant.com
+
+int Cmd_Argc (cmd_state_t *cmd);
+#define cmd_argc Cmd_Argc(cmd)
+#define cmd_argv_command_0	Cmd_Argv(cmd, 0)
+#define cmd_argv_parm1		Cmd_Argv(cmd, 1)
+#define cmd_argv_parm2		Cmd_Argv(cmd, 2)
+#define cmd_argv_parm3		Cmd_Argv(cmd, 3)
+#define cmd_argv_parm4		Cmd_Argv(cmd, 4)
+#define cmd_argv_parm5		Cmd_Argv(cmd, 5)
+#define cmd_argv_parm6		Cmd_Argv(cmd, 6)
+#define cmd_argv_parm7		Cmd_Argv(cmd, 7)
+#define cmd_argv_parm8		Cmd_Argv(cmd, 8)
+#define cmd_argv_parm9		Cmd_Argv(cmd, 9)
+#define cmd_argv_parm10		Cmd_Argv(cmd, 10)
+
+// SAMPLE:
+	//int argc = cmd_argc;
+	//ccs *arg1 = cmd_argv_parm1;
+	//ccs *arg2 = cmd_argv_parm2;
+	//ccs *arg3 = cmd_argv_parm3;
+	//if (cmd_argc < 3) {
+	//	Con_PrintLinef (CON_BRONZE "usage:" CON_WHITE "%s <model.map> <filename.map>", cmd_argv_command_0);
+	//	Con_PrintLinef (CON_BRONZE "usage:" CON_WHITE "%s <model.map> <filename.map> overwrite", cmd_argv_command_0);
+	//	Con_PrintLinef ("Writes current random maze to .map");
+	//	return;
+	//}
+
+// CMD_FAILEXIT_IF2_ (!isok, "Couldn't parse maze model map %s", maze_model_filename)
+//
+//char *sin_model_za = FS_LoadFileQuick (maze_model_filename);
+//CMD_FAILEXIT_IF2_ (!sin_model_za, "Couldn't load maze model %s", maze_model_filename)
+
+//int isok = entitylist_parsemap_metric (&list_model, sin_model_za);
+//Mem_FreeNull_ (sin_model_za); // Done with this.
+
+// CMD_USAGE_NUM_ARGS_DESCRIBE_ (1, "<folder> ", "Checks .jpg and .jpeg size savings");
+
+//		Con_PrintLinef ("Loads current random maze from .txt");
+// Con_PrintLinef ("usage:" NEWLINE "%s " CON_WHITE ARGS " " CON_YELLOW USAGE, cmd_argv_command_0);
+
+
+#define LOW_ARG_NUM_1	1
+#define LOW_ARG_NUM_2	2
+#define LOW_ARG_NUM_3	3
+
+#define CMD_FAILEXIT_IF_(COND,MSG) \
+	if (COND) { \
+		Con_PrintLinef (CON_RED "%s", MSG); \
+		goto fail_exit; \
+	} // Ender
+
+
+#define CMD_FAILEXIT_IF2_(COND,FMT,MSG) \
+	if (COND) { \
+		Con_PrintLinef (CON_RED FMT, MSG); \
+		goto fail_exit; \
+	} // Ender
+
+#define CMD_RETURN_NULL_IF_(COND,MSG) \
+	if (COND) { \
+		Con_PrintLinef (CON_RED "%s", MSG); \
+		return NULL; \
+	} // Ender
+
+#define CMD_RETURN_NULL_IF_FMT_(COND,FMT,MSG) \
+	if (COND) { \
+		Con_PrintLinef (CON_RED FMT, MSG); \
+		return NULL; \
+	} // Ender
+
+#define CMD_RETURN_IF_FMT_(COND,FMT,MSG) \
+	if (COND) { \
+		Con_PrintLinef (CON_RED FMT, MSG); \
+		return; \
+	} // Ender
+
+#define CMD_RETURN_IF_(COND,MSG) \
+	if (COND) { \
+		Con_PrintLinef (CON_RED MSG); \
+		return; \
+	} // Ender
+
+#define CMD_USAGE_NUM_ARGS_DESCRIBE_(NUMPARMS, ARGS, USAGE) \
+	if (cmd_argc < (NUMPARMS + 1)) { \
+		Con_PrintLinef ("usage:" NEWLINE "%s " CON_WHITE ARGS NEWLINE USAGE, cmd_argv_command_0); \
+		return; \
+	} // Ender
+
+// Splits alpha channel out for TGA and PNG conversion.
+#define CMD_CONTINUE_LOOP_MSG_IF_F1_(COND,FMT,S) \
+	if (COND) { \
+		Con_PrintLinef (CON_RED FMT, S); \
+		continue; \
+	} // Ender
+
+
+
+ccs *Cmd_Argv (cmd_state_t *cmd, int arg);
+ccs *Cmd_Args (cmd_state_t *cmd); // Baker: Cmd_Args is the entire string after the command.
+// The functions that execute commands get their parameters with these
+// functions. Cmd_Argv(cmd, ) will return an empty string, not a NULL
+// if arg > argc, so string operations are always safe.
+
+/// Returns the position (1 to argc-1) in the command's argument list
+/// where the given parameter apears, or 0 if not present
+int Cmd_CheckParm (cmd_state_t *cmd, ccs *parm);
+
+//void Cmd_TokenizeString (char *text);
+// Takes a null terminated string.  Does not need to be /n terminated.
+// breaks the string up into arg tokens.
+
+/// Parses a single line of text into arguments and tries to execute it.
+/// The text can come from the command buffer, a remote client, or stdin.
+void Cmd_ExecuteString (cmd_state_t *cmd, ccs *text, cmd_source_t src, qbool lockmutex);
+static void Cmd_TokenizeString(cmd_state_t * cmd, const char* text);
+/// quotes a string so that it can be used as a command argument again;
+/// quoteset is a string that contains one or more of ", \, $ and specifies
+/// the characters to be quoted (you usually want to either pass "\"\\" or
+/// "\"\\$"). Returns true on success, and false on overrun (in which case out
+/// will contain a part of the quoted string). If putquotes is set, the
+/// enclosing quote marks are also put.
+qbool Cmd_QuoteString(char *out, size_t outlen, ccs *in, ccs *quoteset, qbool putquotes);
+
+void Cmd_ClearCSQCCommands (cmd_state_t *cmd);
+
+void Cmd_NoOperation_f(cmd_state_t *cmd);
+
+// Baker: For chat in console
+int Cmd_Is_Lead_Word_A_Command_Cvar_Alias (cmd_state_t *cmd, ccs *text);
+
+void Argv_Cumulate (cmd_state_t *cmd, int start_arg, char *sbuf, size_t sizeofsbuf);
+
+#endif // ! CMD_H
+

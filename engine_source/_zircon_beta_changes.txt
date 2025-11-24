@@ -1,0 +1,3193 @@
+// zircon_dpbeta_changes.txt - October 14 2023, November 12 2023
+
+Zircon is DarkPlaces with a mouse-driven menu, ALT-ENTER fullscreen/windowed switch,
+cut/copy/paste in console and enhancements mostly focusing on user-interface.
+
+// Zircon Beta Release 106
+
+1. Menu QC now supports drawing the loading screen (m_drawloading) from Wrath: Ruin of Aeon
+
+   (This implementation extends the Wrath implementation to provide a little more flexibility.
+
+	Usage: float m_drawloading(vector video_mode_size, float is_opaque)
+    1. video_mode_size is the current video mode size like 1920 x 1080
+	2. is_opaque always has a value of 1.
+	Return value:
+	Return DRAW_OVER_LOADINGSCREEN_0 to draw over the standard loading screen.
+	Return DRAW_NO_LOADINGSCREEN_1 to draw instead of the standard loading screen.
+
+	Advanced: On loading the Menu QC, with "developer 1" or "zircon.exe -developer" command line ..
+    will print to console "Detected m_drawloading"
+
+2. Menu QC now supports drawing save games as pictures.  Zircon Beta has put screenshots in save games since
+   Release #43 (Quakespasm and DarkPlaces ignore the screenshot data and load the saves like normal) 
+   
+   Now precache_pic ("mysave.sav") loads the picture in the save game
+
+   precache_pic ("mysave.sav");
+   drawpic ('100 100', "mysave.sav", '512 320', white_111, alpha_1_0, DRAWFLAG_NORMAL_0);
+   This would work in CSQC as well.
+
+   Advanced: precache_pic returns NULL if it cannot load a picture (NULL is the same as "world" .. both of which are just fancy zeroes)
+
+   So this would work ... if (!precache_pic("mysave.sav")) // couldn't load save pic
+
+3. "mset", "medict" and "medicts" commands for menu entity listing, examination, editing.
+
+4. "prvm_functions server" prints all the known function in the progs.dat ("prvm_functions client" would do CSQC, etc.).
+
+5. "prvm_builtins_in_prog server" prints all the builtin functions (like drawpic or strlen) used in a progs.dat
+
+6. "prvm_builtins server <optional required string>" prints all QuakeC builtin functions.
+   "prvm_builtins client draw" prints all CSQC with the word draw in the name.  Related: documentation_dump
+
+7. "edicts nearby" .. lists entities near you and in front you.  "edicts nearby 200"  lists entities 
+   near you at a radius of 200. "csedicts nearby" does it for CSQC entities.
+
+8. "constants modelflags" now available.  The constants command prints engine constants like "constants effects".
+   The constants command autocompletes so press CTRL + SPACE or TAB to cycle through the known tables.  The purpose
+   of the constants command is to expose engine known constants. (TODO: Make edict command atomize the field?)
+
+	Advanced: The modelflags field can give an entity the ability to rotate like self.modelflags = MF_ROTATE_8 would
+    make a model rotate like a ground weapon (can also give trails).
+
+9. Tweaked total conversion support -- QUALKER and OBJECT N builds no longer try to load Quake.kpf (Quake Remaster)
+   and also do not try print messages about "shareware" or "registered version".
+
+10..MAP Pre-Processor ... Adjusted "_clone_classname" .map pre-processor to handle brush models and added a "origin_x" 
+    and "origin_y" adjust command.  I use this to have braziers have automatic light sources and automatic CSQC 
+	particle emitters with both the light and the emitter having a slightly offset origin .. during .map compile.
+
+11. Fixed the Menu QC "cin_open" command (it was broken in DarkPlaces Beta, but video playing via playvideo is also
+    broken in DarkPlaces Beta but has long been fixed in Zircon Beta).  However, "cin_open" playing a video fullscreen
+	is less helpful for menus than I thought .. even Blood Omnicide does not use "cin_open" and most of the video
+	code seemed to be written by Vortex.  Anyway, it works now.
+
+    Sidenote: What I will be doing instead ... if I want an animation, I will be likely using a Q3 shader like "AnimMap" which
+	can do 64 frames of animation and render in 2D.  It is possible I revisit this in the future, the strength of the
+	video playback implementation is that it only uses a single texture and continually updates the texture (GL upload).
+
+	For most purposes, demo playback or an animated texture is a better tool for the job.
+
+12.	Fixed a very minor order insertion issue with Zircon Beta automatic creation of a default "+zoom" alias.
+	It is supposed to allow a mod to override the alias, just like DarkPlaces "alias startmap_sp "map start"" can
+	be overrriden.  But due to insertion order, the mod override was not occurring.  Few mods have
+	an alias named +zoom and likely no traditional Quake single player mods do -- so unlikely anything was affected.
+   
+	However, I have a mod that uses +zoom with a specific weapon to show a sniper view and it didn't work because
+	the engine override the alias instead of the mod overriding the engine alias.
+
+13. Zircon Beta nows sets the "SDL_WINDOWS_DPI_AWARENESS" hint on Windows.
+	Zircon Beta has told Windows "no dpi awareness" in every version at the application level, so this probably does
+	absolutely nothing differently, but wanted to add the actual code that tells SDL that.
+
+FUTURE: CTRL-I in console to display parameter arguments?
+
+// Zircon Beta Release 105
+
+1. Bug: r_lavaball_hack defaulted 1.  It was supposed to default 0.
+
+// Zircon Beta Release 104
+
+1. "tool_marker" with a single parm places a mark on the screen where an entity is (ex: "tool_marker 6").  Modified
+   tool_marker to use the entity center of brush for brush models (like func_wall).
+
+2. prvm_fields and prvm_globals have a sorted option
+	"prvm_fields server sorted" or "prvm_fields server sorted myprefix"
+	
+3. .map pre-processor command "caulkworld" ... console example: 
+	csgtool maps/mymap.map caulkworld // Turns all textures in world (but not entities like doors) into common/caulk
+	
+	I used this to eliminate lightmap storage on the Shamber Invaders for most non-game surfaces saving 120 MB
+	in map size .. but unlikely anyone else will ever use this.
+	
+4.  Support for an "invaders build" .. Shambler Invaders dedicated engine build.
+
+// Zircon Beta Release 103
+
+1. Fixed loadfont autocompletion.
+
+2. Pre-processor support: For fake brush model collision bodies to effectively get non-cubeoid collisions
+   with .md3 and such.  Example: "_collision_body_9" "models/vehicles/psx/van_car04.md3 188.9375 101.8125 82.25"
+   in world model.  They are made of common/caulk and common/origin textures and at the center of the
+   world.   In console: "csgtool maps/mymap.map collision_body" also works -- the csgtool command invokes
+   the Zircon .map pre-processor at will in the console.
+
+3. r_shadow_q3_radius_fade_hack - specify the fadescale to use for Q3 "radius" lights (spotlights) when DarkPlaces
+   real-time lighting is enabled.  Imperfect, but can decrease super-bright real-time lights for Q3 "radius"
+   light entities that DarkPlaces doesn't understand.
+
+4. "tosses_speed" (default: 1000) "tosses_keep_fields" (defaults to "classname,origin,angles")
+   For use with "ent_create_toss" and "ent_create"
+
+   "tosses" command lists entities created by the above.  ("ent_remove" removes from list).
+
+5.  "sv_movetype_follow_csqc_sendflags 6" will make server-side CSQC entities with MOVETYPE_FOLLOW that
+    have moved will get .SendFlags set to 6 (default is 0x00FFFFFF .. all flags).  This allows mods to
+	do less than a full update for moved entities (for instance, only send the origin and angles instead
+    of sending all fields).
+
+
+// Zircon Beta Release 102
+
+1. "reflectcubemap" can now be added in a default.cfg (previously trying to add to default.cfg would
+   crash.)
+
+2. "reflectcubemap" autocompletion has been enhanced to include _px style cubemap extensions.
+
+// Zircon Beta Release 101
+
+1. "ZIRCON_GETSURFACENUMPOINTS_FLAGS" - getsurfacenumpoint now fills 
+	trace_dphitcontents, trace_dphitq3surfaceflags for the surface.
+
+2. CSQC entity for world gets modelindex field set to 1 when CSQC_Init occurs.  This causes
+   getsurfacenumpoints function to work on the world model.  This is effectively a DarkPlaces bug-fix for
+   a set of functions that -- while useful -- have not been commonly used in the past because they are 
+   for very specific purposes.
+
+3. "constants" command that prints constant tables to the console.  Example: "constants movetype".
+   Particularly helpful for less commonly used DarkPlaces constants like "contentflags_dp" or
+   "surfaceflags" -- this autocompletes (CTRL+SPACE) various constant tables.
+
+4. "autocvars_from_clipboard" .. extracts the autocvars from QuakeC code on the clipboard and sorts it to
+   a list and prints registration commands to the console.  For serious CSQC development.
+
+5. .map pre-processor bug-fix of metrics calculation after the first Q3 patch is encountered (code mistake).
+
+6. "vectornormal3" console command prints more information.
+
+7. "bitatomize" can take a 3rd argument specifying constant type and only prints non-zero bits.
+
+8. "eset" command now autocompletes the entity number that you are looking at (providing it is solid can
+   be hit by a traceline).  Invisible entities, SOLID_NOT and translucent surfaces (glass or fence textures) will 
+   not collide with the type of traceline performed so be sure to look at a solid part of an object.
+
+9. Source code: There is a disabled block of text to change the lavaball effect from MF_ROCKET to EF_STARDUST
+   on load of the alias model.
+
+10. csgtool maps/mymap.map infodump now prints size information for all entities and brushes in the .map
+
+11. "showangles 2" will show the current normalized view vector (v_forward in QuakeC).
+    "showtex -1" will show the current distance to texture collided against -- if tool_marker is enabled
+	it will mark that location.  This is like a measuring stick indicating where the collision occurred.
+
+12. mod_q3bsp_lightgrid_texture now defaults to 0 (it defaults to 1 in DarkPlaces Beta and does not exist at all
+    in DarkPlaces Classic).  The default of 1 makes Quake monsters and other models look wrong in Quake 3 maps
+	and since this does not even exist in DarkPlaces Classic which is what Quake 1.5 and Xonotic use -- I don't
+	know of anything that really desires this new behavior.
+
+13. A test cvar named r_glsl_baker_test to alter the light direction by the view yaw value.
+
+14. "csgtool maps/mymap.map _csg_test_rewrite" will read and re-output the .map as is.  This
+    is a test tool to verify it writes what it reads.  (Note: it appears J.A.C.K. and possibly
+	other tools read patch values as doubles not 32-bit floats).	
+
+15. "reflectcubemap" set the default cubemap for _reflect textures.  Ideally -- like usage in
+    a mod -- the texture name should only be used for this purpose and should not be a texture 
+	that might be used with any in-game textures (because then it would be possible for the texture
+	to get loaded and then later unloaded).  TODO: hardcode exclusivity.
+
+16. r_lavaball_hack 1 -- on model load, causes lavaball.mdl to get EF_FLAME as the trail
+    instead of TR_ROCKET.  This allows lavaballs to have a different effect than rocket trails.
+	For best results, need an effectinfo.txt and particlefont.tga 
+	(see https://www.moddb.com/mods/zircon-engine/downloads/csqc-rain-snow-lava-smoke for a good
+    example -- CSQC Rain / Snow / Lava Smoke .. and copy/look at effectinfo.txt and the 
+	particles/particlefont.tga)
+
+	NOTE: r_lavaball_hack 1 takes effect when a model is loaded.  Type "purgeall" in the console to 
+    force all models to reload.
+
+// Zircon Beta Release 100
+
+1. MOVETYPE_FOLLOW CSQC entities on the server now update origin/angles.
+   (Server entities with .SendEntity function get .SendFlags set ALL FLAGS (0xFFFFFF) if origin or 
+   angles change during the physics frame.)
+
+2. "Decal DropToFloor Automatic" Support for Q3MAP when Zircon is used as CSG .map pre-processor (-csg)
+   "_decal" "target" "_automatic_droptofloor" support (Q3 .map format).  Allowing decals in a map editor 
+   to not need an "info_target" entity (they are automatically created if Zircon is used as a CSG phase tool -- the
+   Zircon .map pre-processor.
+
+3. New: "orientation upright" effectinfo.txt option, renders the particle as seen (billboard reverses, upside down)
+
+4. "cl_particles_stain_mix_with_particle_color 1" cvar.  Set to 0 it mix the particle color with the 
+   stain color and will simply use the supplied stain color only.
+
+5. Support for a 2nd particle texture.  particles fade when "alpha" hits 0 or "time" elapses, make sure the
+   first particle1 lives as long as or longer than the particle2 or the behavior is undefined.
+   Supports: tex2, blend2, color2, tex2, size2, sizeincrease2, alpha2, time2.  FOR BEST RESULTS: don't mix
+   (blend invmod) with (blend add or blend alpha) due to rendering batching.  Some behaviors with pt_snow
+   are "undefined" -- like if the parent particle has a shorter lifespan than the child particle.
+
+6. "particles_split" -- turns particles/particlefont.tga into up to 256 separate images 
+   ("particles_join" will recreate the particles/particlefont.tga") now loads the first image to 
+   determine size, and now writes .tga instead of .png.
+
+   Note that the TGA export does not support compression.  To shrink particles/particlefont.tga with
+   compression, open the TGA in specifically GIMP and re-save.  I say GIMP because many image editors
+   mess up writing TGA (even applications like IrFanView) and GIMP is known to follow the exact
+   specification.  The reason this specification matters is that Quake 3 and Quake 3 tools like map
+   compilers also follow the exact specification and it is important that the map compile pipeline
+   has a proper .TGA.  (And DarkPlaces has always required proper TGAs due to various Quake tool pipelines).
+
+7. Simplication of the console autocomplete system.  More things autocomplete and better.  Additionally,
+   csqc_progname autocompletes.
+
+8. Fixed "dec" without a value defaulted to positive 1 instead of negative 1.
+
+9. Fixed a bug where a memory pool wasn't allocated for CSQC modelview project.  Affected the
+   "CSQC modelviewer" prototype released earlier in the year.
+
+10. ent_create now says the entity number and the origin. (autocompletes)
+11. ent_create_copy <entnum> command.  Like ent_create, uses traceline collision location as origin.
+12. ent_create_trace_fraction cvar defaults to 0.8 to move ent_create positon back from the wall.
+
+13. bitatomize now does 40 bits and changed to print 64 bit integer representations.
+
+14. bind a +(press TAB) now autocompletes correctly instead of autocompleting the current value.
+
+15. OBJECTN builds now use correct Window icon (like QUALKER).
+
+16. "cd info" correction (it didn't work before due to a typo)
+
+17. "jpegresample" to resize a folder of png and tga into jpg of specified size (intended for resizing video
+   frames, generating an alpha channel if specified (and copying shader text to clipboard for creating a q3 
+   animated texture).  Any non-zero value of "cl_video_frame_modulo" will skip images (2 will skip 50%, 4 will
+   skip %75, 5 will skip 80%  ... uses index % (modulo) 4 != 0 (where 4 is cl_video_frame_modulo value)   
+   to skip images (to thin out, say, 1000 video frames to 200.
+
+18. "png_texture_suppress 1" to not load png textures during map load.  Special case for testing
+   automatically generated jpeg animated textures.
+
+19. Support for Q3 shader "animclampmap"
+
+20. cl_video_frame_modulo cvar also affects "playvideo myvid_25_fps" where quake\id1\video\myvid_25_fps is a folder
+   of .jpg images with names like 00001.jpg, 00002.jpg causing jpeg stream playback to skip images.
+
+21. "documentation_dump" dumps cvars, their default values and description to file (it says the file name it
+   creates.
+
+// Zircon Beta Release 99
+
+1. Better protection against loading wrong .vis data by implementing FTEQW lumpsize check (this is
+   in addition to a wrong folder check already in place that seems to not be good enough if someone
+   puts the replacement vis in the wrong folder or if a mod uses some original maps and some
+   re-made maps like Quake 1.5).  It also prints to console console "Loaded maps/dm3.vis".
+
+2. Stopped a black screen console that could happen on load game failure if the start demos
+   were playing.
+   
+3. "copy pos" and "copy angles" console commands.
+																						     
+
+// Zircon Beta Release 98
+
+1. "external_vis 1" supports loading external .vis files that give the original Quake maps
+   transparent water.  The .vis files or the .pak or .pk3 must be in the same folder as
+   the maps they are for.  This is so, say, the Travail start map does not try to load start.vis
+   which would have invalid data.
+
+2. Coronas without real-time light feature now is a cvar that defaults off because it can look
+   wrong in Quake 1.5 which if you kill 50 monsters might create a few super huge coronas that
+   otherwise would not normally render.  To turn on the "coronas without real-time light" feature
+   now requires "cl_coronas_without_light 1" in the default.cfg of a supporting mod.
+
+3. Hardcoded Quake 1.5 double barrel shotgun to have the EF_SELECTABLE model flag stripped so 
+   it is not semi-transparent.  This conflicts with the Quakespasm MF_FENCE model flag, which
+   Zircon supports.
+
+// Zircon Beta Release 97
+
+1. "map" command with no parameters prints the size of the map in MB.
+   If a .map file is detected, calculates the compile time required.
+   For instance, if you compile a .map in J.A.C.K. and Zircon starts you can type "map" and it might say
+
+	filesize       30.4 MB
+	compile time   6 minutes 14 seconds (374 seconds)
+
+2. skybox autocompletion ("sky" command) changes skybox in real-time to allow fast on-the-fly trying skyboxes.
+
+3. Fixed a minor missing .jpeg implementation (not .jpg) oversight that affected nothing (because it 
+   would mess up mess up attempts to save a .jpeg, which the engine never did but a new feature does that).
+
+4. "jpegcheck textures/ambientcg" - will check all jpg and jpeg in the folder texture/ambientcg
+   and then print a list of them where the jpg or jpeg texture is "too big" and a 100,000 KB or more
+   difference could be saved.  "jpegcheck textures/ambientcg go" will actually save these smaller images
+   with "_newb" appended to the end of the filename so that "brick006.jpg" is written as "brick006.jpg_newb".
+
+   (You can them look as these in an image editor and delete the old one and rename the new one, 
+   I do not like the idea of the engine overwriting existing files so therefore it does not.)
+
+5. Map dates in the maps menu works again.
+
+6. shaderprint autocompletion pressing CTRL + SPACE (autocomplete from nothing) fills currently looked at texture.
+
+7. con_textsize lower bounds limited to 2 with CTRL - (special characters or color codes can still affect it).
+
+8. "maze_gen", "maze_to_map" automatic maze generation.  Work in progress.
+
+9. .map pre-processor: "_heightmap" automatic alpha blending capability "_heightmap" "0 to 384"
+
+10. Support for "mult" shader Blendfunc ("multiplicative" ==> GL_ZERO GL_ONE_MINUS_SRC_COLOR)
+
+11. Support for numerous new .map pre-preprocessor capabilities and a console command "csgtool" that can
+    run some of them.  (Many require using Zircon as a CSG stage tool in a .map editor giving Zircon the -csg
+	command line parameter).
+
+	These only work with the Valve 220 J.A.C.K. Q3 map format, known to be the best Q3 .map format and it is
+	supported in TrenchBroom I believe.
+
+	csgtool maps/mymap.map weld // Will combine adjacent triangles into rects ONLY for brushes
+	// Only combines triangles for triangular brushes where the upfacing texture is the most common texture
+	// in the .map.  It will then takes the rects created and tries to combine most of them in the rows.
+	// RESULT: This heavily reduces the numbers of brushes in a terrain map.
+	// RESULT: Your map editor editor will love you for having a 90% reduction in the number of triangles
+	//         it needs to draw.  Probably speeds up map compile too.
+
+	csgtool maps/mymap.map infodump // Prints textures used and frequency and other information.	
+
+11. Fixed "pak_this_map" to work with filesystem upgrade from a few versions ago (meaning "pak_this_map" was broke).
+
+// Zircon Beta Release 96
+
+1. Fixed: Reverted logic that enabled lightradius without lightradiusfade.  This was causing issues
+	some effectinfo.txt particles that used lights.
+
+// Zircon Beta Release 95
+
+This is a largely a source code restructuring/refinement update (quality control update):
+
+* streamlining the file system internally
+* providing some attention to the memory allocation system
+* streamlining the autocomplete system.
+* Refining the .map pre-processor subsystem.
+* Some upcoming .map pre-processor has been largely written but needs refinement.
+
+There are minor side-effect bug-fixes:
+
+* "folder" command now works when in a directory with Russian characters in the path
+* fixed a memory leak with "devinfo", it was not freeing file parse contents 
+* "zircon_history.txt" should honor -userdir on Linux
+
+Linux version compiles.
+
+// Zircon Beta Release 93
+
+1. "Malice Fix" Added and defaulted to 1: "r_cull_darkplaces_classic 1"
+	Malice bad model culling issue in first cutscene demo with a robot bossman with a cigar.
+	It also will allow seeing monsters when noclipping outside the level, like DarkPlaces Classic did.
+	LightningHunter had requested this behavior be restored a few months ago (at least as an option) and
+	at the time, I was not able to determine where/how the difference was.
+
+	"r_cull_darkplaces_classic 0" uses DarkPlaces Beta model culling and the Malice robotman doesn't always
+	draw during the first cutscene (that logic determines, I am assuming, that he crosses the viewplane
+	of the camera and shouldn't be drawn).
+
+2. Windows Unicode Path support greatly improved.  Previously, the engine would run largely
+   ok in a folder with Russian language characters, but some Zircon functionality like
+   "folder" would fail.
+
+3. "utf8_enable 1" now renders the menu correctly (menu sliders).  This enables unicode and is 
+   utf8 is not compatible with the Quake character set and is meant for total conversion usage 
+   like Q.U.A.L.K.E.R or Xonotic.  For example, the bronzed text in Quake is not ASCII (0-127 charcodes)
+   and it gets the unicode treatment with utf8_enable 1 and does not draw because the characters have
+   no drawpic for those characters.
+
+4. Multiplayer => New Game was going to the server list menu.  Corrected.
+
+5. Codebase: Eliminated numerous GCC warnings during Linux compile.  Many GCC warnings relate
+   to coding practices in some ways and these almost all fit into that category.  For instance, GCC
+   warns if a variable declaration hides a global variable of the same name or a previously
+   declared variable of the same name (like if a new declaration is declared in a for loop).
+
+6. Blocked portal generation for BSP model health and ammo boxes by adding a radius check of 128.
+   Non-world (i.e. the real map).  The radius check was the most convenient way to block it -- it is
+   already blocked in most instances, but connecting to a Quakeworld server was still triggering it
+   because models precaching works in a different order.
+
+7. Implemented Hemebond effectinfo.txt lightradius fix that allows lightradius for particles
+   to work without also setting lightradiusfade.  This relates to effectinfo particle effects.
+
+8. "pak_this_map" now adds .jpeg extension files.
+
+	("pak_this_map" will take the currently loaded q3 format map and locate required textures, shaders and sounds
+   and put them in a single folder and make a .pk3 in that folder.)
+
+9. "opendialog" test command will open a file dialog on Windows only.  This is blocking.  
+	Quake will stop cold while the dialog is active.  This is a test intended to pave the way for 
+	utility commands via the console.
+
+10. Addressed several "silent disconnect" scenarios.  Like host errors, playdemo and it can't find the 
+    file.  These would cause the console to not render instead be pitch black because it cl_screen.c
+	thought it was between startdemos.  Short version: Fixed.
+
+11. "cliptraceoutline" will take the current image on the clipboard (like a PNG) and then generate
+    an edge trace and put that image on the clipboard.  This is an intermediate for PNG to .MAP.
+
+12. _layout_to_bbox .MAP pre-processor command written.  Perfection remains ...
+
+
+// Zircon Beta Release 92
+
+1. Give support giving keys.  Type "give" in the console and it will say what the options are.
+
+	give autocompletes better and now can give or remove silver and gold keys.
+   
+   "give key_silver" when you already have one will remove it.
+
+2. (MAPPING, Q3MAP mostly) Support for .jpeg extension to hide _gloss and _norm textures from J.A.C.K.  Probably
+    works to hide textures from other map editors like Trenchbroom too.
+
+3.  Set model lighting to white color for players, monsters, viewweapon with minimum lighting by cvar.
+
+    model light control for monsters, players, view weapon
+    
+	r_modellight_players_nocolor // Set this to 1, player is never affected by color light
+	r_modellight_monsters_noccolor // Set this to 1, monster is never affected by color light
+	r_modellight_viewmodels_nocolor // Set this to 1, viewmodel is never affected by color light
+	r_modellight_players_nocolor_minlight // Minimum lighting pct where 1.0 = fullbright and 0.0 = full dark
+	r_modellight_monsters_noccolor_minlight // A good value is 0.5 or 0.4 to prevent gun from going full dark
+	r_modellight_viewmodels_nocolor_minlight
+
+4. "play" autocompletion improved.
+
+5. con_savehistory cvar.  Some anti-virus complain about history.txt files.  Setting "con_savehistory 0"
+   won't write the history to file and should avoid this anti-virus warning.
+
+6. "traceline" command from 1000 distance to 16384 distance.  Prints distance to console.
+
+7. CTRL + SPACE (autocomplete from nothing) vs. TAB autocomplete is now treated differently for:
+   eset, cset, prvm_edictset, prvm_edictget
+
+   Autocomplete will do verbose for CTRL + SPACE and non-verbose for TAB.
+
+   For these commands, verbose says the field number and datatype.
+
+8. "effects" is now bit-atomized for the "edict" command.  For example it will say "effects" 5 (1 + 4)
+   This helps when the effects field contains multiple bits set. dphitcontentsmask is also bit atomized.
+   And effects prints enumeration long values.
+
+9. effectinfo_particleeffectnum TE_BLOOD will look up the effectname and get the current particle effect number.
+   Particle effect numbers are very sensitive except for the Quake builtin ones and can change if an effectinfo.txt
+   is edited.  Nonetheless, self.traileffectnum uses that and this new command will allow quick testing of
+   effects as trails.  For example, "eset 29 traileffectnum 15" will set edict #29 to have traileffectnum 15.
+
+10. (Q3MAP) "copy image" will copy an image to the clipboard for the current texture looked at. (Windows only)
+    This only works for TGA, PNG or JPEG images.  So the Quake start map without replacements textures
+	this does not copy the texture at this time.
+
+11. (Q3MAP Shader): framemap1 - $map specifies frame0  then framemap1 specifies additional frames
+   Resolves issue with q3map2 not knowing what framemap is and therefore incorrectly sizing the texture.
+   This method allows any q3map2 compiler to be used.
+
+12. (Q3MAP) pak_this_map would duplicate textures used as-is and textures found in shaders if they were the
+    same shader and write them to the .pk3.  It now runs a uniqueness sort to filter out duplicates.
+
+13. (ZIRCON.EXE as CSG Map Pre-Processor) Map preprocessor can now rename entities with world key "_rename" .
+	Example: "_rename" "misc_model_torch=misc_model,misc_mdl_entity_kickable=misc_mdl_entity"
+	Zircon.exe as a map preprocessor will rename all entity classnames of misc_model_torch to misc_model
+	then rename all misc_mdl_entity_kickable to misc_mdl_entity before map compilation.
+
+14. Fixed an autocompletion logic error that referenced an uninitialized variable in unusual cases.
+
+15. Added more helpful description to v_cshift command.
+
+16. Zircon Galaxy and id1 can exist in same gamedir, Galaxy can gamedir change into id1 and back with some 
+    cvar reset difficulty.
+
+// Zircon Beta Release 91
+
+1. Removed sv_progfields cvar.  Obsolete.
+
+2. "pos" command now updates _ang variable (the value can be used by using $_ang as $ converts a cvar to its value.
+
+3. "pos silent" -- adding "silent" parameter to suppress all printing and copying to clipboard to allow a
+   macro to print data to the console by pressing a key.
+
+	Example: 
+
+   bind q "pos silent; echo camera_origin:'$_pos' camera_angles:'$_ang' camera_interval:1"
+
+4. Console editing: CTRL + left or right arrow now stops at periods.
+
+5. chase_stevie (GOODVSBAD) removed.  This was a 2003 multiplayer only mod, haven't seen evidence it really
+   exists and it cluttered up autocompletes.
+
+7. scr_levelshot_auto and sv_save_screenshots will not attempt to do screenshots if LibJPEG is not present,
+   the screenshots are JPEG and need the library.
+
+8. tool_marker with no arguments will print the origin of where the marker is.
+
+9. Auto-saves when Menu QuakeC is in use does not console print menu location (which does not apply).
+
+// Zircon Beta Release 90
+
+1. bind e ==> press CTRL + SPACE ... fills in current keybind for editing.
+
+2. QuakeC new builtins: base64tos, stobase64
+
+string stobase64 (string s) = #192; // Returns Base64 encoded string.
+string base64tos (string sbase64encoded) = #193; // Returns decoded string from Base64 string.
+
+3. Map menu now shows date and time of map creation (maps in pak show "no date")
+   This is so for mapping more easily able to identify when various versions of work in progress maps
+   were created.
+
+4. A fix for connecting to Quakeworld servers (and possibly DarkPlaces servers).  Zircon Beta
+   Release #82 introduced automatic screenshots, during QW download there can be a situation where the
+   worldmodel is loaded by the "worldentity" has yet to be processed --- causing a crash.  Fixed.
+
+5. A 2nd fix for connecting to Quakeworld servers not related to the above.  A change in #84 somehow		
+   caused connecting to a Quakeworld server to fail the first time and then succeed the second time 
+   (suspected reason is order of stuffcmds on gamedir change), although this has not been fully 
+   investigated yet, a different solution seems to cure the issue.
+
+6. Improved the behavior of "forced console" by clearing startdemos after a gamedir change.
+   This appears to solves odd circumstances where the console does not show when exiting the menu 
+   and running no map.
+
+7. Maps menu map preview picture updated on map change.  Some events can cause it to get purged, now
+   it knows to reload itself.
+
+TODO: Aggressively test and tweak maps menu and load game menu for many video resolutions to see if
+	a more consistent layout can be made for resolutions that do not resemble 16:9 aspect ratio.
+
+// Zircon Beta Release 89
+
+1. "screenshot clipboard" writes screenshot to clipboard instead of file.
+
+2. csqc_enable no longer saves to config.
+
+3. From DarkPlaces Beta/Divverent div0: Decal code simplification (fix for hard to recreate decal crash.)
+
+4. prvm_garbagecollection_notify 2 ... prints red if garbage collection clears a string.
+
+5. prvm_edict_remove_csqc and prvm_edict_create_csqc: Create a CSQC entity from console.
+
+6. Effectinfo.txt: Fix for particle/light/trailing spamming when paused.  (Hemebond helped)
+
+7. "purgeall" -- which clears all loaded models -- now restarts the currently running map.
+
+8. cvar_resettodefaults_autocvar - resets all autocvar cvars to their default values.  
+   "cvar_resettodefaults_autocvar silent" will print nothing to the console.
+
+9. "fog" printout tweak.  DarkPlaces modifies the actual fog density multiplying the user fog density times the
+   user fog alpha.  DarkPlaces prints the 
+
+10. "map" command for Quake 3 maps will print the q3map2 version and cmdline keys.
+
+    (This was moved to "devinfo" -> "maps" .. but command lines can be very long so "maps" prints it
+	again").
+
+11. _pos, _ent, _tex, _val cvars:  Stores the results of "pos", "showmodel", "prvm_edictget", "eq",
+    "traceline" to a cvar.  Cvars can be used as values in the console like:
+
+     prvm_edictset server 1 origin $_pos <== $_pos will resolve to, say, "120 331 32" and set that origin.
+
+12. CTRL + SPACE for r_replacemaptexture autocompletes the texture being looked at.
+
+// Zircon Beta Release 88
+
+1. Fixed startdemos exit menu blank screen that occurs mostly only for non-Quake total conversion.  When there were no startdemos,
+   the ESC key in the menu went to a blank screen instead of to console.  Total conversions like QUALKER most likely to have this issue.
+   Vanilla Quake and most Quake mods were not affected.
+
+2. Autocomplete from nothing (CTRL + Space) for a cvar will now quote the value if it has spaces.
+
+3. Visual Studio 2022 compile changes to allow compiling "devinfo" (a change to member_offsetof was required).
+
+4. cl_effectslevel 1-6 (now supports 7, 8, 9 .. less intense light maps for real-time lighting).  It now inserts to command buffer instead of adds to end, allowing things
+like cl_effectslevel 6; r_bloom 1 to work.
+
+5. r_replacemaptexture replace on the fly fixed.  It is supposed to submit the autocomplete
+value to the command buffer, but it stopped doing that after the first completion in Zircon #85 
+when more autocompletes were added.
+
+6. "developer 1" will automatically fix shader "map" or "clampmap" with backslashes instead of slashes.  Must be set on engine start or 
+   requires shader reload.  This was to address a single Q3 map were the author used some Q3 tool that writes out the slashes as
+   backslashes which Q3 must not care about, but DarkPlaces hates.
+
+7. showmodel arguments changed to: showmodel [model] [scale] [framenum] [z_adjust]
+
+8. developer_pointparticles 1 will console print pointparticles parameters as they occur, mostly to see what effect and parameters values
+   are for a pointparticle effect (to adjust it or see what it is without looking at source code).
+
+9. "devinfo" devinfo array realloc fix (typo or minor oversight corrected).
+
+10. scr_xcutoutpos and scr_xcutoutpos cvars.
+
+11. Added VF_CLEARCOLOR_99 to setviewprop to specify the clear color for CSQC viewport rendering.
+
+12. "bind" with no arguments recommends "bindlist"
+
+13. Fixed prvm_edictset argument accumulation, it was combining wrong indexes into a single string.
+
+14. Added anti-draw masks for .drawmask in CSQC: 
+
+#define ENTMASK_NO_STATIC_32768			32768 // Baker
+#define ENTMASK_NO_BEAMS_65536			65536 // Baker
+#define ENTMASK_NO_EFFECTS_131072		131072 // Baker
+#define ENTMASK_NO_DLIGHTS_262144		262144 // Baker
+#define ENTMASK_NO_MESHENTITIES_524288	524288 // Baker: Future expansion only.  Not active.
+
+15. "repeat" command: execute a command or alias multiple times.
+
+16. Fixed traceline tool.
+
+17. Autocomplete from nothing for cvar with spaces now quotes it.
+
+18. Zircon User-Interface in mid to late beta stage.  Very little is left to do be done except quality control.
+
+19. Zircon Inventory API in mid stage.  Needs hardening.
+
+20. Zircon Map API in mid beta stage.  Very little is left to do be done except quality control. Needs hardening.
+
+21. Refinement for real-time traceline tool.
+
+22. vid_mouse_show_coords 1 shows mouse coordinates.  vid_mouse_show_coords 2 shows mouse coordinates in 
+    scaled coordinates.
+
+23. Improved DarkPlaces color code escape sequence generation.  This is what shows next to color fields with the
+    edict command to give the color key a color.
+
+24. "devinfo" -> "Environment" now shows system command line arguments.
+
+FUTURE TODO:
+
+1. Make beam texture that "no mods seem to use" fallback to classic DarkPlaces textures/particles/lightning.png .. this texture
+lives in a rogue location but may also be an undocumented feature (so no rush because to fix what exactly?)
+
+2. Make "maps" and "maps menu" use indepdendent lists.
+
+// Zircon Beta Release 87
+
+1. (MULTIWORD FIND) Typing "find shadow lightmap" (5 results) will find matches that must 
+   contain both words.  Useful for narrowing down results since DarkPlaces has several hundreds 
+   of console variables and commands (typing "find shadow" gets 111 results, for example).
+
+2. Typing "sensitivity" and pressing ALT-SPACE autocompletes current value for editing.
+   (Variable value recall = ALT-SPACE)
+
+3. Typing "prvm_edictset" and "prvm_globalset" have autocompletion for each field.
+	For instance: "prvm_edictset server 1 effects 4" would set EF_BRIGHTLIGHT (4) for
+	the player and "prvm_edictset server 1 effects 0" would set it off.  Pressing
+	ALT-SPACE at server would autocomplete client,server or menu and at the fieldname
+	autocompletion will cycle through all fields.  Pressing ALT-SPACE at the value
+	field "prvm_edictset server 1 effects (ALT-SPACE)" will fill in the current value
+	for editing.
+
+4.  "devinfo" -> Globals and ->CSQC Globals now shows variable type in a column.
+
+5.  "prvm_globalset server" and pressing enter will print a list of all global variables
+    and their values.
+
+6.  Slight tweak to color key to make sure white is white.  Color key is displayed when
+    typing "edict 25" if that edict has colormod values (it will draw text in the approximate
+	color next to the value).
+
+7.  Dungeon Maker API origin brush fix.  (The Dungeon Maker Lite mod needs works, after 
+    discovering the origin brush engine flaw, I released the mod with rather raw without 
+	some extra fine tuning that it needs because the origin brush issue broke several
+	map pieces. )
+
+8.  "divisors 16" will print 2 4 8 in the console.
+
+9.  image_split <filename> <columns> <rows> splits a image in images based on columns and rows.
+
+10. Added the word "unicode" in the description of "utf8_enable" so "find unicode" works.
+				
+11. Improved font reset after gamedir change (previously it queued in a less desirable order).
+
+12. "pak_this_map" choked on a single missing .wav and would refuse to finish writing the 
+    archive.  It nows warns on missing files like if a map tries to play a .wav that doesn't
+	exist, but will continue writing the .pk3.
+
+13. Console text selection for variable width fonts.
+
+14. Corrected another PRIx type macro I foobared in a past build.
+
+// Zircon Beta Release 86
+
+1. 64-bit lightmap fix extended due to experimentation by Hemebond's implementation in DarkPlaces Beta.
+
+2. PRId64 properly implemented in a way that works with GCC, MinGW (GCC for Windows) and Visual Studio.
+   In the past, the wrong macro was used and also improperly.  This macro prints 64-bit integers and
+   hides the different implementations in each of the 3 different compilers.  (MinGW is somewhat of a mixed
+   case because it more like GCC but uses Microsoft run-time libraries).
+
+3. "pak_this_map" outputs the archive as "my_map.pk3" instead of "my_map.zip".
+
+4. Standardization of Sys_Error messages --- these do not need a trailing newline in the message and any instances
+   of trailing newlines has been removed.
+
+5. Dungeon API implemented fully (in theory).  More testing to do.  It is not threaded yet.
+
+6. r_replacemaptexture now ignores _glow textures and real-time replaces during autocompletion.
+
+// Zircon Beta Release 85
+
+
+1. pak_this_map writes a .pk3 to folder
+
+2. Compile with Microsoft Visual Studio 2022 has returned (DEVINFO is not available for Visual
+   Studio 2022 because it refuses to compile a macro named "member_offsetof")
+
+3. Deep audit of GCC compiler warnings and eliminated many warning messages and resolved a fair number
+   of mostly cosmetic issues (in most cases, there were console prints or VM warning messages
+   with extra parameters that were not printing due to the printf having more variables that the 
+   expected number of "%s" and such in the print string).
+
+4. "ent_create" fix from DarkPlaces Beta.
+
+5. Performed more work on startdemos.  A future idea is to have certain actions clear the
+   queue -- the plan is to bridge cross as we go.   The philsophy should be that deliberately
+   starting a map, loading a save game or connecting to a server or playing a demo should
+   nuke the start demos, but intentionally playing them again should restart the process
+   the way it is intended.  In the past, this really did not matter so much.
+
+6. GCC revamp: These are the default in the windows build and most messages not grouped in those
+   have had the code definitively reworked to not generate warnings like unused variables.  And
+   in a few cases, some better code emerged to address "too many parameters" printing oversights
+   that were lost in the sea of warnings that are not of any actual concern.
+	-Wno-unused-label
+	-Wno-missing-braces
+	-Wno-misleading-indentation
+	-Wno-switch
+	-Wno-parentheses
+	-Wno-unused-but-set-variable
+	-Wno-unused-value
+
+7. Dungeon API - 98% written, but the last 2% is the magic and needs a demo using it.
+
+8. VM_Warningf in QuakeC converted to VM_WarningLinef everywhere (100% conversion).  DarkPlaces
+   much like Quake itself -- has ambiguous message printing where it does not clearly indicate
+   whether or not a trailing newline "\n" character should be in the message.  Zircon has long
+   largely eliminated this by making most message printing functions automatically do a newline
+   and the name of the function like VM_WarningLinef communicates it processes it as a "line" 
+   and the trailing "f" means it accepts "printf" style of string expansion.
+
+9. Linux makefile changed to have certain GCC warnings disabled.  The previously used cflags 
+   are commented out in the line above CFLAGS_WARNINGS.
+
+	-Wno-missing-braces 
+	-Wno-misleading-indentation 
+	-Wno-switch 
+	-Wno-parentheses 
+	-Wno-unused-but-set-variable 
+	-Wno-unused-value 
+	-Wno-unused-label 
+	-Wno-declaration-after-statement 
+	-Wno-missing-prototypes 
+	-Wno-discarded-qualifiers 
+	-Wno-implicit-function-declaration
+
+TODO: Linux + vid_mouse 0 + WSL = the mouse still moves some ?
+
+// Zircon Beta Release 84
+
+1. Fixed console showing on-screen briefly between startdemos demo1 and demo2.
+
+2. Changing gamedir now resets the 8 different fonts (console, default, menu ..).
+
+3. "effectinfo_list" was checking if an effect started with a name, changed to matching if it contains
+   a name.
+
+4. Fixed scr_levelshot_auto improved and no longer crashes on invalid map/hosterror.
+
+5. QuakeC: buf_sort Sorting an empty string buffer no longer prints a warning and just does nothing.
+   It could be perfectly normal like number of matches = 0.
+
+6. "tool_marker" has become a command instead of a cvar.  It marks a location with a dot in 3D space
+   that always shows.
+
+		tool_marker: draws a dot in 3D space at specified location
+	
+		tool_marker 55 // set origin to server #edict 55 origin
+		tool_marker client 55 // set origin to client #edict 55 origin
+		
+		tool_marker 506 220.2 12.4 // Set to this origin
+
+		tool_marker 0 // Turn tool marker off
+   
+
+TODO: Improve always light on the gun for colored lighting scenario in pitch black (no color data).
+
+// Zircon Beta Release 83
+
+1. startdemos did not chain.  This was bug was introduced in Zircon Beta #15 in an attempt to stop
+   startdemos resuming after "disconnect" or "stopdemo".  CL_DisconnectEx was clearing the
+   startdemo number (-1) but CL_DisconnectEx is called at the end of demos too so this change
+   eliminated chaining.  Tested connecting a server and playing demos and it looks like startdemos
+   are not resuming.  It looks like the broken chaining bug was introducted in #15 in when
+   correcting a "typo" from Zircon Beta #10.
+
+2. Fixed scr_levelshot_auto trying to screenshot when map load fails, which would crash.
+   Checks for r_refdef.scene.worldmodel and if NULL, the client has no worldmodel to render.
+
+3. Made an imperfect tweak to detecting Q3 map lighting.  It will correctly detect unlit maps if the
+   map did not do the -light phase, it cannot detect maps with the -light phase performed with no
+   actual lights.  This solves an issue with some Q3 lit maps with lights reporting as unlit (instead of
+   barely lit).
+
+4. Some automated dungeon maker work in progress items which need more work.
+
+TODO: Ideal for minlight with zero lighting.
+
+// Zircon Beta Release 82
+
+1. "scr_levelshot_auto 1" automatically takes a levelshot/e1m1.jpg for any map that does not
+   have a screenshot when the map is played.  "scr_levelshot_auto 0" to disable.
+
+2. "sv_autosave 1" now prints a message the first time per map indicating that an autosave
+   has occurred.  This is so there is awareness of the feature.
+   
+   "sv_autosave 2" will not print a message.
+
+3. Some dungeon making cvars relating to map compile arguments for q3map2 have been made:
+	dungeon_bsp_switches "-meta -v -mv 1000000 -mi 6000000 -samplesize 8"
+	dungeon_vis_switches "-vis -saveprt -fast"
+	dungeon_lit_switches "-light -v -deluxe -faster -cheapgrid -filter -gamma 0.5"
+
+4. "menu_grid" developer command.
+
+// Zircon Beta Release 81
+
+1. PNG write written for Zircon's lodepng method 
+   ("screenshot my_screenshot.png" works instead of returning failed).
+
+   
+2. sv_interactive_flag which defaults to 256 (FL_ITEM) will add a flag
+   RENDER_FL_INTERACTIVE_512 which is sent to the client and can be queried by 
+   float render_flags = getentity ([entnum], GE_RENDERFLAGS_504); in CSQC.
+
+3. particles/particlefont.png to images -> particles_split (8 x 8 = 64 particle font only)
+   particles_join takes images in particles/images and creates a particlefont.png from them
+   16 x 16 (256 particles) and writes particles/images particlesfont.txt also.
+
+   The particles/images/particlefont.png and particles/images/particlefont.txt must be copied
+   to particles folder to take effect (after engine restart or typing cl_particles_reloadeffects).
+
+4. Start of dungeon maker functions .. SSQC:
+	VM_DungeonMake,					// #150
+	VM_DungeonStatus,				// #151
+
+// Zircon Beta Release 80
+
+1. Unicode path support in Windows.  This likely broke in Zircon Beta #50-#60 range when
+   Zircon Beta implemented using the current directory as the base path.
+
+2. Fixed: Autosave caused a crash in Intermap Travel Map between map saves.
+
+3. movetype_follow was not being expanded in "edict" command.  Added movetype_follow
+   and 2 others to expansion for "edict" command".
+
+4. Probably: re-enabled code by KleskBY that addresses an issue on certain non-US keyboards.  This code
+   got disabled at some point in the past by an oversight. :(  If it was ever disabled.
+   This is a bit vague and I don't have the necessary keyboard to be able to test this out.
+   Short version: *if* the fix wasn't enabled, it is now.
+
+// Zircon Beta Release 79
+
+1. Savegame menu did not show monster totals when kills > 100, fixed.
+
+2. Fixed typo of "progs/demon.mdl" (resulted in "Monster" instead of "Fiend" for getentity queries)
+
+3. Quakespasm "overbright" saves to config.
+
+4. Removed "unlinking" cvar spams when gamedir changes (developer prints now).
+
+5. vid_magnification_factor cvar that shows current 2D magnification multiplier.
+
+// Zircon Beta Release 78
+
+1. Automatic save games "sv_autosave 1" // defaults on
+   Menu -> Single Player -> Load -> _auto_save_0
+
+2. Another update to texturefindpos to find animated textures better based on feedback from jakub1.
+
+3. Zerstorer zer1m3 fix cvar "sv_gameplayfix_nosquashentities 1" makes zer1m3 key not fall in lava.
+   But after reading hemebond's notes, as a whole Zerstorer is not playable in a DarkPlaces-based engine
+   for other reasons including modification of constant variables.
+
+4. OUM conchars hardcode "fix".
+
+// Zircon Beta Release 77
+
+1. Update to texturefindpos to find animated textures better.
+
+2. Q3 Map Pre-Preprocessor - "_clone_trigger" supports transforming entity into a "func_group"
+
+3. Console: "devinfo" -> Zircon Manual updated include some features that were not documented.
+
+// Zircon Beta Release 76
+
+1. console type "devinfo", click Zircon Manual
+
+2. Implemented lightning_hunter save position of background music to save game.
+
+3. "_clone_trigger" "trigger_push" Q3 .Map Preprocessor takes any func_group with this
+   and creates a trigger brush of specified classname covered in "common/trigger".
+
+4. Touch ups.
+
+// Zircon Beta Release 75
+
+1. Arcane Dimension should be fully supported "out of the box".  In particular, AD Sepulcher
+   now loads with static torches receiving EF_NOSHADOW and alpha where indicated.
+
+2. "getentity" expanded to include GE_ENTITYBOX2D_506, which returns the bottom right
+   2D coordinate for rendering a box around the entity (based on server setsize bounding box, not 
+   render bounding box).  Calling 
+   
+    vector box_maxes = getentity (your_entnum, GE_ENTITYBOX2D_506); // bottom right of 2D box
+	vector box_mins = v_up; // v_up is by getentity GE_ENTITYBOX2D_506 to the left top of 2D box
+
+
+// Zircon Beta Release 74
+
+1. Better autocompletes for prvm_edictset, prvm_edictget, eset (alias of prvm_edictset server).
+
+2. Fixed map levelshots stale on re-entering maps menu.
+
+3. Fixed typo for Quakeworld protocol coop for "progs/tarbaby.mdl".  It was missing the .mdl extension.
+
+4. New: "getentity" GE_MONSTERCHAINFIND_512, GE_MONSTERCHAIN_OPEN_513  (z-depth sorted), 
+   GE_MONSTERCHAIN_GET_514, GE_MONSTERTYPEQW_505, GE_PP_SECRETCHAIN_OPEN_520, GE_PP_SECRETCHAIN_GET_521
+
+5. Console: "hex 33" prints "21" (temporary hex console command).
+
+6. Console: "eq" equation calculator now supports hex with 0x prefix like C and other languages.
+   Example: "eq 0xFF" prints "255".  "eq" now supports 0x as hexadecimal numbers.
+
+7. "colorpcts" improved and displays closest representable color:
+     "colorpcts 0xffcc33"
+     "colorpcts 255 255 0"
+	 "colorpcts 1.0 1.0 0.0"
+
+8. Fixed "key not found" for "eset" command (shorthand for "prvm_edictset server")
+
+9. Fixed autocvar_ autocomplete crash when demo1 was playing (was not checking for progs->loaded)
+   before checking progs information.
+
+10. "edict" command: colormod is now colorkeyed, overbright colors get normalized to 1.
+
+TODO: Sometimes larger Quakeworld entity numbers are wrong.  Fix.
+
+
+// Zircon Beta Release 73
+
+1. Zircon CSQC traceline constant MOVE_NETWORK_ENTITIES_BAKER_4096 to indicate collision
+   with monster network entities (monsters).
+
+2. "getentity" supports GE_RENDERFLAGS_504, in particular to identify monsters using RENDER_STEP_1
+
+3. r_minlight 3 is now one of the "overbright" choices in the Options in the menu.  A different way
+   to brighten up "too dark monsters".
+
+// Zircon Beta Release 72
+
+1. More CSQC "getentity" and "getentityvec" field support.   Supports GE_MAXENTS_NEG1, GE_EFFECTS_202, 
+   GE_FRAME_203, GE_ANGLES_204, GE_MODELINDEX_200.  And CSQC Extension: ZIRCON_GETENTITY_1 new fields:
+   GE_HEALTH_500, GE_MAX_HEALTH_501, GE_MONSTERTYPEHACK_503.
+
+   GE_MONSTERTYPEHACK_503 returns a value like MONSTER_INFO_WIZARD_23 or MONSTER_INFO_ZOMBIE_24 based
+   off matching the model name with traditional Quake model names like "progs/zombie.mdl".
+
+2. COLOR PRINT of autocvars_ that are vectors with values that in color range (0 to 1.0, like colormod) or
+   (0 - 255 range) like effectinfo.txt particles colors print to console with a color key in
+   the closest color that can be represented.
+
+3. Protocol extension: ZIRCON_EXT_SERVER_SENDS_MONSTER_INFO_256 which causes FL_MONSTER flagged 
+   models to send health/max health for entities.
+
+4. VM_drawfill and VM_drawstring warnings about non-zero for _z value now only prints if
+   developer 1.  fteqcc apparently doesn't format 3rd vector component and it isn't used in these
+   functions and it shouldn't require zero filling to avoid a warning for something that isn't used
+   and not expected to be used.
+
+   In particular, cs_project fills a 3rd vector value indicating Z depth.  That third component 
+   should not need to be set to 0 to be used as a 2D vector without printing warnings.
+
+5. tagmodel data was mistakenly printing.  Changed it to require "developer_loading 1"
+
+6. "-q13" .map pre-processor converts Quake 1 maps in Valve 220 map format to Quake 3.  This was used
+   to convert DM6 to the Quake 3 map format.
+
+// Zircon Beta Release 71
+
+1. "edict" command lists the constant name for "solid" and "movetype".
+   It will say "movetype" "3 (movetype_walk)" instead of "3".
+
+2. "edict" command will list the flags components in flags, spawnflags and items.
+   It will say "flags" "544 (32 + 512)" instead of "544"
+
+3. Zircon as .map pre-processor (Q3): "_atomize" .. any brush entity with "_atomize" "1" will have 
+   every brush forming the entity to become its own entity inheriting all keys and values (except _atomize).
+
+   So one func_wall with 142 brushes, the preprocessor will turn it in 142 different "func_wall" 
+   entities.
+
+4. Zircon as .map pre-processor (Q3): "automatic origin brush" creation for any 
+   entity with "_originmake" key.
+
+   Any entity with "_originmake" key in it, the map preprocessor will make an origin brush 
+   the size of the entity bbox.
+
+   This "automatic origin brush" creation.  This is useful for things that spin from
+   the center origin.  (And not useful for doors, usually you want the side of the door to be the origin).
+
+5. "colorpcts" takes a number like 0x88FFCC (format in effectinfo.txt) and outputs color percents
+   in RGB 0-255 and percent form (0.00 to 1.000)
+
+// Zircon Beta Release 70
+
+1. "edict" (singular) command now sorts the fields.  No change to the "edicts" command at this time.
+
+2. "devinfo" -> Models now shows number of triangles and size of the model.
+
+3. "map" command no longer prints worldspawn keys, to view those use "devinfo".
+    Wanted to shorten the amount of text printed.
+
+4. (DEFAULTS OFF) "con_hints 1" will show console hints in the console after holding CTRL down for 1 second.
+   The default is 0 (OFF) because if you are paging back in the console history, it gets in the way
+   of reading the console log.
+
+5. In the console, if you hold down shift to highlight text, pressing CTRL will show the number
+   of characters you selected.
+
+6. In the console, pressing CTRL-T will fire a traceline and mark the surface impacted.
+   Pressing CTRL-T again will clear the mark.
+
+7. In the console, pressing CTRL-SHIFT-P will activate "showpos 1" + "showangles 1"
+   or turn it off.
+
+8. In the console, pressing CTRL-P with console open is "freezeall" (if cl.islocalgame)
+   pressing again will unfreeze.
+
+9. "eq" equation processor now supports function "atan" (it already supports sqrt, sin, cos, others ..)
+
+10. "atan2" console command temporarily until I add argument support to equation processor.
+
+11. "objmodelsplit" command now supports optionally specifying a suffix. (*) Had a model that it did
+   appear to export the texture coordinates correctly.  Needs investigated.
+
+// Zircon Beta Release 69
+
+1. traceline command.  Does a traceline, marks the spot and prints every traceline variable.
+   Note that on Quake 1 maps, the texturename replied is "solid".  On Quake 3 maps, it prints
+   the full texture name.  This is what DarkPlaces does, and since I am not looking to make
+   non-standard behaviors different from DarkPlaces ... 
+
+   The goal of the traceline command is being able to see what the different traceline
+   variables show.
+
+2. Bug fix: Fixed clipboard pasting in console when text is already selected and the cursor is not at the end of
+   the word.
+
+3. _last replaces the "_lastvalue" cvar.  Equation editor fills this cvar with the
+   result.
+
+4. Equation calculator.  "eq 2 + 2" or "eq floor(2+cos(1) ) + sqrt(2)"
+
+   Type "eq" in the console and it says the details.  "pow" is an exponent operator so
+   "2 pow 3 = 8".  Can't use "^" because C and QuakeC (and C style languages) use that for "xor".
+
+   All values treated as double (64-bit floating point).  
+   
+   Equations are processed as standard "C" order of operator precedence.  QuakeC operator precedence is very 
+   similar to standard C.
+
+	Bitwise operators "&" (AND), "^" (XOR), "|" (OR), "<<" and ">>" and "~" (NOT) convert values to 
+	signed 32-bit integer (int32_t) before performing the operation and the result is converted back 
+	to double.
+
+	This should be very similar to what QuakeC does in allowing floats (everything is a float in QuakeC)
+	and looking at DarkPlaces opcodes for QuakeC, it looks like floats are accessed as int32_t
+	for bitwise operations (using a union).
+
+    "%" modulus operator is deliberately like QuakeC (4.1 % 4 == 0.1 not like zero like C).
+	So "%" is basically "fmod()".
+       
+	Logical operators && and || are short-circuiting like in C.  (QuakeC does not do short-circuiting
+	for && or ||).
+
+    Division is as in QuakeC -- it is "double division"  10/3 = 3.3333 not C integer division where 
+	result is 3.   If you want C style "floor division", do "floor(10/3)" which is what you have to
+	do in QuakeC.
+
+5. Noticed DarkPlaces like to calculate visibility portals for .bsp models like
+   healthboxes in the .bsp loader -- and it isn't a big deal but now it won't do this 
+   anymore if the client detects it is not the world model 
+   (dedicated server set "mod_bsp_portalize 0" instead if you care.)
+
+// Zircon Beta Release 68
+
+1. Console key shortcuts: (WHEN CONSOLE IS OPENED ONLY)
+	
+	CTRL-I: Toggle "tool_inspector" which shows entity numbers for all entities. (and showtex which displays texture name)
+	CTRL-SHIFT-S:	sets viewsize 120; crosshair 0; showfps 0; r_drawviewmodel 0
+					for making a video or screenshot that has no HUD and no view weapon.
+
+					Pressing CTRL-SHIFT-S again will restore your previous settings.
+
+2. scr_infobartime_off decays when disconnected (using cl.realframetime)
+
+	Example:
+	> infobar 3 Helloworld		this displays "Helloworld" in the infobar
+
+	However, in DarkPlaces and previous versions, if you type this while no map loaded, it would
+	never go away until a map is loaded.
+
+3. "infobar" silent style using a 4th parameter.  
+	"infobar 3 Helloworld" ..        displays infobar text "Helloworld" for 3 seconds logging to console.
+	"infobar 3 Helloworld silent" .. same, but does NOT log to console.
+
+4.  "sv_precache_suppress_warning 1" will make model/sound precache warnings into developer prints.
+    When making a complex mod, might not wish to fix those until polishing time.
+
+5. DarkPlaces Q3 load process makes it unclear whether or not a Q3 map has vis data.  Reworked
+   the map loaders for Q1, Q2, Q3 bsp and OBJ maps (which never have vis data) to explicitly
+   indicate in the model structure whether or not it contains visibility data.
+
+   "map" and "devinfo" will now correctly report if the current map has vis data. (The .vis stage
+   of map compile, if a map leaks it will not have .vis data).
+
+6. "levelshot_maps_all (prefix)" - now supports a prefix.
+
+	This command takes a "levelshot" of all maps for the maps menu (accessible via
+	Menu->Help/Ordering) --- can now optionally do a prefix filter -- 
+	for instance "levelshot_maps_all dm" would do only maps like dm1, dm2.  
+	This helps update levelshots for only a specific group of maps.
+
+	These screenshots live in quake\id1\levelshots or quake\gamedir\levelshots folder.
+
+7. Wrote "message of the day" code and then disabled it. This was a conceptual test.
+   That idea could be better be utilized as a graphical menu overlay.
+
+Zircon as Q3 map preprocessor:
+
+8 . "map_include_name_fields" for Zircon as Q3 map preprocessor:
+
+	Explanation, Zircon as a .map preprocessor can merge other maps into a .map and optionally
+	prefix the "targetname" and "target", but there can be extra fields at that are also
+	"string to entity" references.
+
+	An example: "door1" might become "submap_door1"
+
+	"map_include_name_fields" "door_name attach_to controller" would also prefix the fields
+	"door_name", "attach_to" and "controller".
+
+
+9. "brushfacer" "1" for Zircon as Q3 map preprocessor.  Finds all upwards facing brush
+   surfaces and changes their texture to "textures/up" for bulk optimization of imported
+   terrain generator key.
+
+   If a map is compiled and Zircon is used a preprocessor, if the map worldspawn key 
+   "brushfacer" "1" is present, Zircon will perform this operation.  The output .map than
+   then be opened in the .map editor (and used a replacement for the original).
+
+   There is also a console command that can do this with clipboard data, the newly updated "brushfacer" 
+   which in this version uses Zircon's Q3 map preprocessor system (the old "brushfacer" was written
+   before the .map preprocessor parser was created).
+
+
+// Zircon Beta Release 67
+
+1. As Q3 .map pre-processor (C:/quake/zircon_beta_gcc.exe -csg C:\quake\id1\maps\someq3map)
+
+1a. Map import pre-processing for Q3 Valve 220 format .map (J.A.C.K.) now supports texture locking.
+
+    This is the ability to merge in a series of maps and "paste" them moving them around.
+
+	This is done with worldspawn keys for the .map:
+
+	"map_include_prefix_start_end" "submap 2 16"
+	"map_include_move" "8192 0 0"
+	"map_include_step" "2048"
+
+	This would important submap2.map through submap16.map moving each .map "8192 0 0" (x y z)
+	and placing them vertically in increments of "2048".
+
+	This has many potential uses including working on each .map as a separate .map and then
+	the "main" map can automatically import them during the compile process.
+
+1b. Ability to generate collision brushes.  This can allow creation of entities that
+    can collide using brush model collision which can rotate and have non-cube collision,
+	which unmodified DarkPlaces cannot do for .md3 / .obj / .mdl etc.
+
+	Will look for key values in an entity and if it finds keys starting with "model_gen",
+    will take all the keys for that entity that start with "model_gen" and create 
+	"func_collision" brush entities.
+
+example:
+	{
+	"classname" "misc_mdl_entity"
+	"model" "models/vehicles/psx/taxi_car05c.md3"
+	"spawnflags" "65536"
+	"model_gen" "models/vehicles/psx/4door_car01.md3 184.5 76.703125 65.21875"
+	"model_gen1" "models/vehicles/psx/armored_car08.md3 206.75 94.953125 97.03125"
+	"model_gen2" "models/vehicles/psx/compact_car03.md3 168.3125 79.4375 64.3125"
+	"model_gen3" "models/vehicles/psx/oldcar_car07.md3 173.4375 72.78125 85.875"
+	"model_gen4" "models/vehicles/psx/police_car05b.md3 220.96875 83.40625 67.34375"
+	"model_gen5" "models/vehicles/psx/scrap_car06.md3 190.78125 74.40625 50.03125"
+	"model_gen6" "models/vehicles/psx/sedan_car02.md3 195.96875 86.9375 65.9375"
+	"model_gen7" "models/vehicles/psx/sedan_car05.md3 220.96875 83.40625 61.375"
+	"model_gen8" "models/vehicles/psx/taxi_car05c.md3 219.03125 83.40625 67.34375"
+	"model_gen9" "models/vehicles/psx/van_car04.md3 188.9375 101.8125 82.25"
+	"origin" "-1399 -620 88"
+	}
+
+	The func_collision brushes will be inserted as the first entity in the .map
+	and look as such:
+
+	{
+	"classname" "func_collision"
+	"mdl" "models/vehicles/psx/van_car04.md3"
+	"size" "188.938 101.813 82.25"
+	{
+	( 188.938 101.813 82.25 ) ( 188.938 101.813 0 ) ( 188.938 0 82.25 )  common/caulk [ 0 1 0 -20.4 ] [ 0 0 -1 6.29999 ] 0 0.5 0.5 0 160 0
+	( 0 0 82.25 ) ( 0 0 0 ) ( 0 101.813 82.25 )  common/caulk [ 0 1 0 -20.4 ] [ 0 0 -1 6.29999 ] 0 0.5 0.5 0 160 0
+	( 188.938 0 82.25 ) ( 188.938 0 0 ) ( 0 0 82.25 )  common/caulk [ 1 0 0 20 ] [ 0 0 -1 6.29999 ] 0 0.5 0.5 0 160 0
+	( 0 101.813 82.25 ) ( 0 101.813 0 ) ( 188.938 101.813 82.25 )  common/caulk [ 1 0 0 20 ] [ 0 0 -1 6.29999 ] 0 0.5 0.5 0 160 0
+	( 0 101.813 0 ) ( 0 0 0 ) ( 188.938 101.813 0 )  common/caulk [ 1 0 0 20 ] [ 0 -1 0 20.4 ] 0 0.5 0.5 0 160 0
+	( 188.938 0 82.25 ) ( 0 0 82.25 ) ( 188.938 101.813 82.25 )  common/caulk [ 1 0 0 20 ] [ 0 -1 0 20.4 ] 0 0.5 0.5 0 160 0
+	}
+	{
+	( 188.938 101.813 82.25 ) ( 188.938 101.813 0 ) ( 188.938 0 82.25 )  common/origin [ 0 1 0 -20.4 ] [ 0 0 -1 6.29999 ] 0 0.5 0.5 553648128 16512 0
+	( 0 0 82.25 ) ( 0 0 0 ) ( 0 101.813 82.25 )  common/origin [ 0 1 0 -20.4 ] [ 0 0 -1 6.29999 ] 0 0.5 0.5 553648128 16512 0
+	( 188.938 0 82.25 ) ( 188.938 0 0 ) ( 0 0 82.25 )  common/origin [ 1 0 0 20 ] [ 0 0 -1 6.29999 ] 0 0.5 0.5 553648128 16512 0
+	( 0 101.813 82.25 ) ( 0 101.813 0 ) ( 188.938 101.813 82.25 )  common/origin [ 1 0 0 20 ] [ 0 0 -1 6.29999 ] 0 0.5 0.5 553648128 16512 0
+	( 0 101.813 0 ) ( 0 0 0 ) ( 188.938 101.813 0 )  common/origin [ 1 0 0 20 ] [ 0 -1 0 20.4 ] 0 0.5 0.5 553648128 16512 0
+	( 188.938 0 82.25 ) ( 0 0 82.25 ) ( 188.938 101.813 82.25 )  common/origin [ 1 0 0 20 ] [ 0 -1 0 20.4 ] 0 0.5 0.5 553648128 16512 0
+	}
+
+// Zircon Beta Release 66
+
+1. Several "warning" prints that a player cannot act upon are now developer prints, so there are fewer printed
+   warnings for Quake 3 map format maps.
+
+2. pak_this_map (automatically packages up a Q3 .map into a folder for quickly making a .pk3 of the contents) 
+	also copies the .map source.
+
+3. "colorpcts" command to convert rgb values from 0-255 (like in an image editor) to percents
+    which several tools like .map "light" entities or DarkPlaces "colormod" use.
+
+	Example: 
+
+    > colorpcts 128 54 91
+	> 0.50 0.21 0.36  <--- these are the to 0.1 to 1.0 range equivalents.
+
+4. "brushfacer" - will take .map text from the clipboard, find all the triangles facing up
+   and set their texture to "textures/up" and pastes that on the clipboard.
+
+   This allows rapidly converting a .map made in a terrain generator in an optimized Q3 .map.
+
+   For instance, take a .map made in a terrain generator ... replace all textures with "common/caulk".
+
+   Open the .map and copy all the texture to the clipboard and run "brushfacer" and paste the result
+   back into the .map.  The "textures/up" can be mass replaced with grass or rock and all the triangles
+   not facing up will be "common/caulk" and these surfaces are removed from rendering during the q3map2
+   compile process.
+
+   This can reduce rendered triangles by 90%.
+
+5. -csg command line parameter.  Run Zircon as a "CSG Tool" allowing Zircon to pre-process the .map 
+   and look for preprocess hints.
+   
+6.  Automatic road generation (Zircon as CSG preprocessor .map tool) scans for 
+    "info_decal_start" and "info_decal_point" to generate roads between points using Q3 map decal
+	projection -- projecting the decals on surfaces (which do not have to be flat).  It can systematically 
+	repeat, say a dirt decal.
+
+7.  (ALPHA STAGE) Paste multiple maps into a .map (Zircon as CSG preprocessor .map tool) scans for
+    specified keys and pastes other maps into the source .map.
+
+	Unfortunately, does not adjust the texture matrix, leads to misaligned textures making the tool
+    usable only for .map that use textures that are noisy (sand, rock, mud, grass) where no one could notice
+	misaligned textures.
+
+	TODO: Look through TrenchBroom source code and see how texture lock works to calculate the texture
+    matrix.
+
+8.  "r_usesurfaceculling_nosky" experimental cvar added to exclude sky from r_usesurfaceculling.  
+    Effectiveness to be determined.   TODO: Example?  Test result?  Test map?
+    
+
+// Zircon Beta Release 65
+
+1. r_novis 1 will render entities when no clipping outside a map (from DarkPlaces Beta "Only use BoxTouchingVisibleLeafs when not using r_novis")
+
+2. "which" command has full path aware autocompletion in the console.
+
+    Example: 
+		> which player/player.mdl
+		progs/player.mdl is in package pak0.pak
+
+3. "pak_this_map myfolder" now will dig through a Quake 3 map and find any .ogg or .wav files that the
+   map has in fields and will put those in the folder.
+
+   "pak_this_map" is a Zircon command that helps turning a Quake 3 map into a .pk3 far easier by creating a
+   folder with all the necessary textures/sky box textures/cubemaps and shaders that the map requires.
+
+   And now it looks for sounds too.
+
+4. Collision_NewBrushFromPlanes warning prints are now developer prints, a casual player cannot do anything
+about them anyway.  These sometimes occur with Quake 3 maps when building collision brushes, possibly using 
+when Quake 3 "celshader" capabilities during map compile.
+
+5. Changed default value of developer_spawnfunction_warnings 1.  Zircon by default will always print
+all warning for "no spawn function" messages.  The previous default value of -3 made those warnings print
+as developer prints for Quake 3 maps (-3 = always except for Quake 3 maps) because those maps often have
+entity types that are unknown.
+
+6. Fixed the description of the "cvar csqc_polygons_darkplaces_classic_3d" which was incomplete. This cvar
+   defaults to 1, which is 3D R_BeginPolygon compatibility with DarkPlaces Classic but can be set to 0 to use
+   the DarkPlaces Beta 3D polygon drawing system which has some advantages (and some disadvantages) and it really
+   depends on what you are trying to do to determine which one is a best fit.
+
+
+7. "-shell" optional capability made available in #64 is no longer in the standard Zircon executables 
+   but can be enabled in a custom compile by adding -DSHELLENABLE to defines.  This can be a useful feature
+   in a private build, but don't want the feature in the general engine.
+
+8. makefile reworked to support a Q.U.A.L.K.E.R. build (Q.U.A.L.K.E.R. is KleskBY's Stalker: Anomaly mod).
+   https://www.moddb.com/mods/qualker
+    
+
+TODO: Finally make a button to cause Zircon to screenshot all maps
+
+
+// Zircon Beta Release 64
+
+1. Fixed issue with resizing Window in real-time that got broken in Zircon Beta #58 by reverting some FBO changes
+   acquired from DarkPlaces Beta (for now).
+
+2. Available in a separate Zircon version enabled with "-shell" command line parameter ...
+
+   "shell" command, only available by adding "-shell" to command line.   Allows Zircon to run a .exe
+   from the console with arguments if specified (does not wait for completion). 
+   
+   "shell_wait" does same except waits for completion (blocking -- Zircon will do nothing until completion 
+   occurs -- useful for running a .bat file.).
+
+3. showmodel now prints edictnum (so can immediately alter it further with prvm_edictset if desired)
+
+4. prvm_edictget sets "_lastvalue" cvar.
+
+5. "prvm_edictget_autostore 2" .. prvm_edictget will set _lastvalue cvar string and copy value to the
+	clipboard.  1 is set _lastvalue cvar string (no clipboard set).  0 is do neither when using
+	prvm_edictget.
+
+6. Improved autocompletion of cl_cmd and sv_cmd via better delimiter splitting/sorting/whitespace trimming method.
+
+
+7. Added a barmake command that generates a series of smaller scaled images and skin files.
+
+8. "force_centerview" will forcibly autoscale resize check.  There are rare instances where I don't think autoscaling
+   kicked in and it is difficult to catch these scenarios, but keeping an eye out.
+
+NOTES: CSQC -- cs_project and cs_unproject use current vid_conwidth and vid_conheight.  In Zircon, the 3D phase
+	   and 2D phase do not necessarily use the same canvas.  Rectify somehow with a CSQC scaling high res solution.
+
+NOTES: Super weird CSQC rendering issue that seems to be related to when CSQC "getstati" is called during a CSQC_UpdateView
+	   and additionally R_Polygon drawing flickering.  Very strange and it equally affects DarkPlaces Classic.
+	   I put some QuakeC in another function and then called the function and it resolved both.  Could be a thread
+	   timing issue somehow or something with the timing of the drawing queue switching from 2D to 3D.
+
+// Zircon Beta Release 63
+
+1. cl_beams_polygons 0 (Quake) is new default.  Old default was 1 (DarkPlaces).
+
+2. CTRL + LEFT and CTRL + RIGHT find next word considering "/" as a separator.
+   This help autocompletion navigation of path aware completions like the "folder" command
+   or various commands with texture or model names as arguments.
+
+3. "_jack_scripts" console command adjustments for animmap, q3map_bouncescale.
+
+// Zircon Beta Release 62
+
+1. Sound not found messages were not printing.  After some investigation, discovered that these
+   messages have always been missing in DarkPlaces Beta.  Restored them.
+   Will get messages like "Sound sound/plats/tech_medplat1.wav not found" if a sound is missing
+   the way that Quake and DarkPlaces classic generate those messages.
+
+2. mod_q3shader_default_polygonoffset now defaults to -48 (old default was -2).  This should fix flickering 
+   decal projection in Quake 3 maps.  The value -48 was chosen after a number of experiments and seems
+   to be solid.
+
+3. Changed "COULD NOT FIX BADLY PLACED ENTITY" from a Con_Print to a developer print. 
+   DarkPlaces Classic had "COULD NOT FIX BADLY PLACED ENTITY" as a developer print, so restored that behavior.
+   An example map with the issue is E4M7 Azure Agony where an item_cells is partially in the floor and it is 
+   also partially in the floor in official .map source release.
+
+4. Fixed an alpha channel glitch in mainmenu.png in darkplaces_classic_gold_menu.pk3 and made the monsters
+   and items pk3 use jpeg.
+
+// Zircon Beta Release 61
+
+1. Fixed division by zero crash that could occur using QuakeC function "soundlength" where
+   loading certain sound files if could not figure out the speed of the sound.
+
+2. "modeldecompile" now supports map submodels like "modeldecompile *1"
+   A func_wall or a func_door is a map submodel and they have names like "*1".
+
+// Zircon Beta Release 60
+
+1. "texturefindpos metal" will find the location of the first surface in a map using a texture
+   containing the word "metal" and will print the coordinates on-screen.
+
+2. Q3 shader: "framemap" can do more than 2 parameters.  This is one way to do Quake 1 buttons
+   in the Quake 3 map format, but this is models in general.
+
+3. "giftoshader" will convert an animated gif into tga files plus print text of shader that uses them
+   to screen.
+
+4. "objmodelsplit" can process 256 groups (old very arbitrary limit of 10 was far too low).
+
+5. Experimental commands: "vegetationmake", "mapgenpoints", "mapgenmask" that are works in progress.
+   They aren't ready for prime time.
+
+6. Better autocompletion of modeldecompile.
+
+7. Q3 shader parser recognizes and ignores "monsterclip" (instead of print a developer warning with developer 1).
+
+8. printfile command prints a file to the console.  Ex: printfile readme.txt
+
+9. "playermodel" autocompletes in the console (Only the mod Nexuiz uses this AFAIK.  Maybe Xonotic also?)
+
+// Zircon Beta Release 59
+
+1. basedir is set to current working directory if unset mirroring DarkPlaces Beta.
+
+2. "r_usefrustumculling 1" is a new cvar which defaults on.  However, it can be turned off.
+   r_usefrustumculling 0 will cull using PVS but not frustum cull.
+
+   This is a temporary measure to have available to work around DarkPlaces incorrectly culling giant
+   sky surfaces in Q3 map format.
+
+   I have seen this before in the Xonotic map techassault
+
+3. r_lockpvs/r_lockvisibility both resets on a new map.  If set to 1, it would cause a crash on a map change 
+   or restart previously.
+
+4. "modeldecompile" of an alias model (Quake 1 .mdl) no longer inverts the Y-axis
+   modeldecompile of an alias can take an optional frame # to do a pose other than frame 0.
+
+5. "fog" with no arguments prints each number with what the value represents.
+
+6. "map" prints out extra data, such as the number of triangles and number of vertices and the size of the map.
+   This can help in map optimization, particularly with the Quake 3 map format.
+
+7. ITdevkc's fix for DarkPlaces issues with saving special characters, like the map "wickedstart".
+   This fix decodes special characters when loading save games and otherwise uses standard parsing on normal
+   map load.  This distinction avoids a save game issue that can over time cause runaway slashes.
+
+8. MD3 attachment tags for Quake 1 .mdl
+
+   An example is progs/player.mdl.md3tags -- this example is tuned for the Feral Mod player model.
+
+   Which contains this text:
+
+	// mdl tag file indicating triangles to tag .. changed from 184 to 103
+	// changed from 184 to 103
+	// v1
+	tagbackpack,103,taghead,100,taghand,164,tagbackpack2,273
+
+	In this example tagbackpack is triangle #103
+	taghead is triangle #100, etc.
+
+	The attachment code looks like:
+
+	clientqc:PutClientInServer ... add
+
+	// Putting this at the end is probably ok 
+	if (1) {
+		// TODO: Remove the entity on death?
+
+		entity xt = spawn();
+		xt.movetype	= MOVETYPE_NOCLIP;
+		xt.solid = SOLID_NOT_0;			
+		xt.classname = "attachment";		
+		setattachment (xt, self, "tagbackpack");
+		xt.origin = '0 0 -6'; // Move backpack down just a bit
+		xt.model = xt.mdl = "models/q_items/backpackout.md3";
+		
+		precache_model	(xt.mdl);
+		setmodel		(xt, xt.mdl);
+	}
+
+9. Fixed issue with "devinfo" and clicking BSP entities when no external .ent file was present.
+
+10. Fixed issue with "devinfo" combined with zircon_command_line.txt feature being used.
+    "devinfo" uses the selfpack feature in DarkPlaces and in Windows it was unable to find the file
+	when the zircon_command_line.txt dummied in "quake_engine" as the executable name.
+
+
+// Zircon Beta Release 58
+
+1. PVS Fix from DarkPlaces Beta, which is intended to fix invisible monsters and/or monsters
+   ignoring the player on very massive maps.
+
+2. v_viewheight can add or subtract from viewheight.  For testing.  Quake default viewheight is 22.
+   To get Half-Life viewheight of 28, set "v_viewheight 6" which will raise the viewheight by 6.
+
+   This is for testing/experimentation.  The right way to set the viewheight is QuakeC in
+   PutClientInServer ... set self.view_ofs = [0 0 22]; // 22 is Quake, 28 is Half-Life
+
+3. Many small adjustments from DarkPlaces Beta regarding viewblends and framebuffer drawing.
+
+// Zircon Beta Release 57
+
+1. OBJ supports MD3 tagnames for model attachments:
+   tagname propellor_rear 102.8 0.7 20.6  (tagname <name> <xoffset> <yoffset> <zoffset>)
+
+2. Noclipping no longer touches triggers.   "noclip" movement does not fire touch functions.
+	The old behavior is available with sv_altnoclip 0.
+
+3. Shift + Up arrow/Down arrow scrolls console 1 line at a time (Shift + Pageup/Pagedown no longer do)
+
+4. "devinfo" loads CSQC entities without a classname (before it ignored them and could say there
+   were no CSQC entities if none of them had a classname.)
+
+5. Purgeall command.  This allows reloading a model by "purgeall" and restarting a map.
+
+6. poon-wood.bsp fix (signed underflow on load Mod_Q3BSP_LoadLeafs for mins maxs) ... note that
+   I noticed what appears to be a shader parsing error somewhere in poon-wood.shader where leafs_01
+   never gets parsed due to some unknown parse issue that occurred earlier in the shader file.  I moved
+   leafs_01 to the top and worked right.
+
+   https://github.com/DarkPlacesEngine/darkplaces/commit/43f63d6ac7120d5cd17300d801856a94e740e9c0
+
+7. Made "addstat" (SV QuakeC) adding stat 0 (health) a developer print as Quake 1.5 does this.
+   And it didn't warn in DarkPlaces Classic and is not likely a problem in this case.
+
+8. Implemented DarkPlaces Beta bitshifting fix for "getstati" optional parameters.
+   darkplacesextensions.qc with the engine source has the lightly documented extra parms in
+   the prototype in an fteqcc compatible way.
+
+9. Addstat fix to support EV_VECTOR (part 1).  SV_UpdateQCStats (fte: dpcompat_stats)
+
+   FTE checks for EV_VECTOR on send and fills as such ...
+		case ev_vector:
+			statsf[qcstats[i].statnum+0] = eval->_vector[0];
+			statsf[qcstats[i].statnum+1] = eval->_vector[1];
+			statsf[qcstats[i].statnum+2] = eval->_vector[2];
+			break;
+
+
+   Part 1 achieves hiding the message in Quake 1.5 (which affects nothing, it didn't work even in
+   DarkPlaces Classic).  Future: Part 2 will actually complete the implementation and make it work.
+
+  (Need to create viable test subject for verification, without verification there is no way to 
+  assure it works).
+
+10. Collision_ValidateBrush: brush with no points! and similar brush collision messages 
+   that sometimes print for a rare Quake 3 map are now developer prints.  The user can't
+   do anything about them and those prints are annoying.
+
+11. "developer_spawnfunction_warnings 3" to fine tune when "no spawn function for"
+   print messages like original Quake, Quakespasm and derived engines.  DarkPlaces Classic
+   would developer print these, Zircon does Quake behavior.  However, sometimes it would
+   be nice to shut those up, particularly for Quake 3 maps with lots of weird entities.
+
+
+
+12. Sprite unaligned struct access during loading fix from DarkPlaces Beta.
+
+13. TODO: cl_particles.c - no changes that have an effect yet, modified a bit to possibly
+    incorporate some changes with "Quake particles", need to examine in more detail first.
+
+14. TODO: See about incorporating sys_shared.c changes in DarkPlaces Beta including crash
+    report
+
+15. TODO: See about incorporating fatpvs changes in DarkPlaces Beta
+	https://github.com/DarkPlacesEngine/darkplaces/commit/541436b5a8750272755940c7b5c5c3bb469043a8
+
+
+// Zircon Beta Release 56
+
+1. Shift + Page Up/Page Down scroll the console by one line at a time to allowing scrolling up
+   to a smaller degree than PGUP / PGDN in console.
+
+2. "objmodelsplit" which can separate out a single group in an .obj model
+    objmodelsplit models/vehicles/helicopter.obj 5 // splits out group 5 into a separate obj model
+	objmodelsplit models/vehicles/helicopter.obj -5 // removes group 5 and writes a separate obj model
+	The new obj model has _out appended to it .. so models/vehicles/helicopter_out.obj
+	Note that obj is a text file format and the created obj model has statistics in comments at the
+	top like # of verts/#triangles/etc.
+
+
+// Zircon Beta Release 55
+
+1. SV_Shutdown nows sets prog->loaded to false to allow cvar deletion for progs that are not running.
+   Not all the way to perfect yet ... getting close.
+
+2. Some persistent data uses changed to correct mempool so "memstats" does not report a leak since there
+   is not one. Previously some permanent allocations used "tempmempool", which is incorrect.
+   Also switched some missing texture allocations to use the texture memory pool.
+
+3. "objmodeladjust" command supports more complicated obj models.
+
+4. Reset world lights on gamedir change including clearing r_shadowmapname (realtime lights recently loaded map data)
+
+5. Purge models and sounds on gamedir change Mod_PurgeALL / S_PurgeALL
+
+// Zircon Beta Release 54
+
+1. View blends ... they now fully reset on death/restart/gamedir change.  This fixes an issue that 
+   jakub1 reported with Tomb of Thunder.
+
+2. Division by zero turned to a developer print, unless developer 1 set.  Many single player
+   Quake mods have division by zero occur regularly and other engines including classic DarkPlaces print
+   nothing.  "developer 1" when testing a mod will print the messages.
+
+3. Brush empty submodel is now a developer print, other engines do not print this warning and it takes
+   away from the single player experience.  "developer 1" to see those.
+
+// Zircon Beta Release 53
+
+1. "jpegsplit" does png in addition to tga, updates the window titlebar with progress as it goes.
+
+2. "devinfo" enhancements that display more information.
+
+3. Adjusted the vid_samples range from 1 to 32.  But it doesn't work because DarkPlaces uses GLSL pixel shaders
+   so vid_samples "works" (SDL2 gets and sets the multisample request) but multisample antialiasing does not
+   work with pixel shaders, where GLSL (OpenGL shading language) tells every single pixel how to render.
+
+4. "levelshot_maps_all".  Adjusted screenshot timer to wait until 10 frames are rendered to give a better 
+   chance that all the lightmaps have been uploaded before taking a screenshot.
+
+5. In progress .. get cdtrack to restart on vid_restart.
+
+6. "devinfo" the TabSelect control on the left scrolls in case of "too many to display". 
+
+7. "devinfo" displays cdtrack, skybox in "Map" section.  For BSP Entities, removes unsightly carriage return
+   characters (char 13) which render in Quake as a brown special character.
+
+// Zircon Beta Release 52
+
+1. Changed some timers in Zircon-specific function to use host.realtime instead of calling the 
+   real time system function Sys_DirtyTime ().  Code I wrote, infrequently called that function
+   to get the "realtime" for detecting double-click and such.  I don't expect any behavior
+   differences -- but wanted to "fix" this oversight and make sure multiple clicks in a single
+   frame still count as double-clicks.
+
+2. "levelshot_maps_all" will make screenshots for all maps in the current game directory.
+
+3. "levelshot_here" will make a screenshot for the map you are on at the place you are at.
+
+
+// Zircon Beta Release 51
+
+1. Maps menu will display Q3 level screenshots "levelshots/mapname.tga".
+
+2. Maps menu no longer refreshes after entering every time.  Press SPACE to refresh the list.
+   Refreshing the map menu can be slow since DarkPlaces digs into each map finding the map title
+   which means it parses the entities.  With a lot of maps, this can be slow.
+
+
+
+// Zircon Beta Release 50
+
+Linux compile -- after make sdl-release ... need to do: cat bundle/engine.zip >> zircon_beta_linux_sdl
+To concatenate the engine bundle (contains form1.txt, icons and a column sizing cursor for SDL2).
+
+1. "devinfo" - first use of new user-interface capabilities, a first step towards making
+   more information available to the developer faster.
+
+2. Solidified cvar reset after gamedir change.  It passes all the tests set up to catch issues.
+
+3. SMEJ2 "solid cobwebs / waterfalls" resolved.  If a quake.rc does not have a default.cfg,
+   Zircon will handle that situation by adding "default.cfg" to the command buffer as DarkPlaces
+   is designed to use that to trigger certain engine startup settings.
+
+4. Codeblocks IDE project file for Linux that worked with Zircon Beta #49.  Used Xonotic 0.8.6 CodeBlocks 
+   project file as a starting
+
+   Probably mostly supports Zircon Beta #50 compile, but the UI elements require an external pk3 
+   that contains a cursor and some icons that is built during the compile and this is not implemented 
+   in the CodeBlocks project file, so the UI elements will be missing at run-time.
+
+5. Rewired TrueType font support to allow for loading a font from memory and the inclusion
+   the open source friendly Google Roboto font.
+
+6. Italian keyboard has a "+" key, now checking that for CTRL + "+" for console text sizing.
+
+7. Clear menu reentrant on gamedir change if it is the maps menu (servers -- well QW)
+
+8. Added an inactive implementation of a hemebond gameplay fix idea for testing.
+
+9. Cvar vid_mouse_show_coords.  Defaults 0.
+
+10. Added an engine .pak to the build process.
+
+11. Large reduction of the number of pragma message developer messages.  Most of those thoughts
+   or notes that remain active are now at the end of this file.
+
+// Zircon Beta Release 49
+
+1. Fixed a CSQC canvas issue with csqc_full_width_height
+
+2. Cursor selection.
+
+// Zircon Beta Release 48
+
+1. gl_texturemode is in the Options->Change Video Mode menu
+
+2. ALT-ENTER timer removed.  It seems to no longer be needed due to clearing rendering data on map load.
+   The timer was to help prevent a crash with a cause I was not able to understand, I think it is solved
+   now.  Only "developer 1" enables ALT-ENTER timer, in the event it is needed for testing.
+
+2. Fixed crash related to stale CSQC drawpic by memset 0 of prog->polys on Renderer Shutdown.
+   This crash was only possible in mods using R_BeginPolygon in CSQC, which is very few mods.
+   
+   This crash fix would fix a crash situation in DarkPlaces Classic with R_BeginPolygon on 3D textures
+   however, DarkPlaces Beta uses a different system for 3D (Zircon can use either system, each have
+   advantages.)
+   
+3. Improved total conversion support (mod_list.txt) and detection.
+
+4. Made server browser not offer Quakeworld for total conversion custom games.
+
+5. Some True Type Font groundwork.  DarkPlaces has supported True Type Fonts for ages.  I want
+   to use it in the menus.
+   
+6. A memset 0 fix from DarkPlaces Beta that stops the 3D mesh system from doing memset 0 on a NULL
+   pointer.  This never caused a crash on any operating system, but the C specification indicates that
+   memset on a NULL pointer is not something you are supposed to do ... anyways ...
+
+// Zircon Beta Release 47
+
+1. Fixed Hebi_Hayaki/QuakeCombatPlus startup issue.  Able to replicate this.  Quake 1.5 and
+   QuakeCombatPlus both autosave and save a game before the client has received and loaded models.
+   The Zircon screenshot process was accessing stale rendering data that has not yet been reset.
+   
+   Depending on circumstances and the previous map loaded, this did not always occur.
+   
+2. Reverted 2 other changes in #47 (DarkPlaces Beta server shutdown adjustment) and some vabuf
+   macro streamlining -- this is because I'd like to put those through some additional testing
+   and I want version #47 to be a solid build without unknowns if possible, as change #1 above
+   appears to affect Zircon Beta Release #43 thru #46.
+
+// Zircon Beta Release 46
+
+1. r_minlight default is now 0.  gl_overbright_models option in console is preferred.
+
+2. gl_overbright_models defaults to 0.  This was the intended default however it was defaulting to 1.
+
+3. fixed autocompletion of cvar aliases (it was autocompleting the cvar, not the alias)
+
+4. DarkPlaces Beta/bones: sound fix SND_Spatialize_WithSfx for hard to replicate issue.
+
+5. Eliminated some remnants that printed to the Linux console.
+
+6. DarkPlaces Beta/bones: SV_DisableCheats_c fix
+
+7. "framemap" Q3 shader, similar to animmap .. allows 2 buttons frames in Q3 map format.
+
+8. Alteration of jack_scripts (nolightmap -> surfaceparm nolightmap, noimpact->surfaceparm noimpact, framemap -> map)
+
+
+TODO: DarkPlaces encodes strings on save.  Some "WAD" strings.
+
+// Zircon Beta Release 45
+
+1. Improvements to maps menu (click Help and Ordering).
+
+2. Improvements to Load Game menu.
+
+3. Improvements to server list.
+
+// Zircon Beta Release 44
+
+TODO LINUX: Some checks for Linux server, need to remove some prints to the
+Linux console.  Hit the shutdown segfault.
+
+1. Linux now has an icon, Windows now uses SDL_SetWindowIcon.
+   The embedded icon is s_zircon_icon_jpeg_base64
+   
+   Engine editing note: This uses standard JPEG to base64 method
+   Use https://base64.guru/converter/decode/image/jpg
+   
+   Downside: Editing the zircon.exe with Resource Hacker or another tool
+   to change the icon will no longer work.
+
+2. Solved some Linux issues including inability to write large strings.
+
+3. Fixed crash with pressing an alphabetic key in the load menu.
+
+4. Eliminate a memory leak and hardened error handling for certain
+   jpeg functions used by savegame.
+
+5. With -home directories like the Linux default, the savegame menu
+   will check both directories.
+
+7. When using a -home directory, the video options and load game menu display the
+   home directory.
+
+8. Load game menu allows mouse selection of save without start it, does not scroll
+   when mouse click selects an item.
+   
+9. Saved fov for +zoom alias is set upon config load.
+
+// Zircon Beta Release 43
+
+1.  Visual Load Game menu with screenshots that are saved into the save game when saving.
+    These save game files will load in DarkPlaces, Quakespasm, etc.  The data is ignored by other
+    modern engines.  "sv_save_screenshots 1" is the cvar.  Setting to 0, will not save screenshots
+    in saves and will not use new Load Game menu, but the classic Quake one.
+
+2.  gl_overbright_models is now in the menu.  With it enabled, Zircon looks pretty much like Quakespasm.
+
+3.  "gl_overbright_models 1" healthboxes and ammo boxes or other Q1 .bsp items.  Setting "gl_overbright_models 2" will 
+    apply the overbrighting to healthboxes and ammo boxes, but Quakespasm does not do this.
+
+4. "playvideo" works and works in the console too (it didn't in classic DarkPlaces).  
+    Supports .dpv, animated .gif and a folder of jpegs.  Can have an associated audio file as well.
+
+5. Fixed a mistake I made with cl_chatmode.  "disconnect; menu_load" would check the first word
+   to see if it was a command.  Because I used the wrong token parse, the first word would be "disconnect;"
+   and not "disconnect".  Corrected this mistake.  If a demo was playing, this could result in 
+   some console commands not being processed if they had a trailing semi-colon
+   
+6. Made cl_chatmode also check for demo playback and if a demo is playing, do not consider command line
+   for cl_chatmode "type in console".
+
+7. Corrected a memory leak in intermap travel load game, a temp variable was not being freed.
+
+8. Test commands: jpegshotclip, jpegextract, giftoclip
+
+9. "objmodeladjust" can recenter and scale obj models.  Made because Noesis adds extra faces and vertexes
+   to .obj models on import.
+
+10. Renamed developer_loadfile to developer_loadingfile_fs to push it down autocomplete list, it has only a        single use in the source code.
+
+11. There are numerous other internal changes for optimization, although these are significant and important,
+    other than autocomplete strengthening, few of them be noticeable except looking at dramatically simpler
+    source code in few dozen places.
+    
+12. "playloop" console command, similar to "play" (play a .wav or .ogg) except that playloop will loop the
+    sound playback.
+
+// Zircon Beta Release 42
+
+1. New command effectinfo_list will list the loaded client effects from effectinfo.txt
+
+2. New command effectinfo_dump will print full text of an effect.
+   Example: "effectinfo_dump torch_small"
+
+3. "snd_waterfx 1" added from DarkPlaces Beta -- muffles sound underwater.
+
+4. Maps menu and maps command list BSP 47 and 48 maps (Quake Live is BSP 47).
+
+// Zircon Beta Release 41
+
+1. sv_gameplayfix_fiendjumpfix defaults 0 due to a sliding corpse compatibility issue
+   with Quake 1.5.  "sv_gameplayfix_fiendjumpfix 1" seems to have no ill effects in Quake.
+
+2. zircon_command_line.txt now supports // to comment out unwanted params.
+		
+3. "map park deathx" ... ability to specify a map and a startspot.
+
+4. ZIRCON_INTERMAP_VERSION_1 and ZIRCON_PFLAGS_CORONA_ONLY_RENDERS are now in the QuakeC
+   extensions list to give official DarkPlaces the possibility of adding these extensions
+   to be able to play the Intermap Demo (2024 Quake Omega Effects Challenge Series #1 of 20)
+
+// Zircon Beta Release 40
+
+1. Added extra clock data (surplustime) exposed to QuakeC and saved for Intermap Travel to support countdown timers.  surplustime (QuakeC global) is the amount of time to subtract from sv.time to get the number
+of seconds elapsed for the current visit to the map.
+
+2. Unique startup key to help console commands like pak_this_map
+   write predictable random .shader names that don't collide
+   with future use of the command while using the same one during
+   a session.  Was hiding "map.shader" by there being multiple copies
+   of "map.shader" -- now map_383883.shader or such ..
+   
+3. shaderprint -- prints the file the shader is located in and where is it (pak, dir, etc.)
+
+4. With showtex 1, shaderprint works with no args.
+
+// Zircon Beta Release 39
+
+1. "shaderprint" -- find the text for a shader and print it.  It autocompletes from nothing.
+   Press CTRL + SPACE to autocomplete from nothing.
+   
+2. "pak_this_map" -- display a report of the currently loaded Quake 3 map
+   "pak_this_map <folder>" like "pak_this_map mymap"
+   --- Will copy all image resources and shader text into "mymap" folder
+
+3. "pak_this_map mymap overwrite" -- overwrite .. will CUMULATIVE SHADER mode
+   Goto map1 --> "pak_this_map mymap overwrite" 
+   Goto map2 --> "pak_this_map mymap overwrite" // Will sort through scripts/map.shader 
+     and write out cumulative update to scripts/map.shader containing unique entries. 
+     
+     ("Adds to the shader list mode")
+
+// Zircon Beta Release 38
+
+1. menu_keylist_txt allowing customization of keys menu without QuakeC.
+
+3. "jpegsplit <folder>" converts tgas in that folder to jpeg including a separate one with alpha channel.
+
+4. Bad "droptofloor" warning is a print instead of dprint (as most other engines do).
+
+5. "no spawn function" warning is a print instead of a dprint (as most other engines do).
+
+6. Altered lit sprite rendering to not use 0.25 of ambient.  (more to do?)  We did not add fullbright effect to additive sprites (yet?).
+
+7. Corona only effect via QuakeC pflags field render.  cl_main.c will do a realtime light
+   if PFLAGS_Dynamic is not set but PFLAGS_CORONA is.
+
+8. Fixed bug with intermap startspot not setting QC global first time entering a map.
+
+9. Intermap: new QuakeC fields: totaltimeatstart and totaltimeatlastexit (TotalTimeAtStart, TotalTimeAtLastExit)
+
+
+TODO: Add PFLAGS to static entities
+TODO: Fix PNG screenshot issue where it fails and falls back writing .tga with png extension.
+NOTE: scr_screenshot_png defaults 0, scr_screenshot_jpeg defaults 1
+
+ALSO: "bitatomize" command that prints the bits present in an integer. "parse" that simulates token parsing of a string.
+
+// Zircon Beta Release 37
+
+1. "gl_overbright_models 1" and "gl_overbright_world 1" option, overbrights models in-game similar
+    to what Quakespasm and other derivates do.
+    
+2.  EF_NOSHADOW is now supported for static entities.
+
+3. Fixed missing q3 textures were not printing "missing texture".
+
+4.  "copy" command that copies console to clipboard uses super-fast string type that allows very fast
+    string concatenation.  Console buffer with 10000 lines used to take a couple of seconds to copy to
+    clipboard, now it feels instant.
+
+5. Intermap travel (changelevel2 [map] [startspot]) -- does not support static entities at this time
+   enable_intermap 1 (enabled) or enable_intermap 2 (force even for teleporters without changelevel) needs defined the QuakeC, trigger_changelevel
+   should specify a "startspot".  
+   
+   QuakeC: BeforeExitMap.  Changelevel2 saves entities but calls BeforeExitMap for any cleanup QuakeC wants to do
+           first -- like remove missiles, set monster.enemy = world and such.
+   QuakeC: ReturnToMap. Fired while returning to a map, ReturnToMap should call worldspawn
+   QuakeC: The global .string startspot; is a string representing the start spot.
+   QuakeC: The global .float enable_intermap; should be set to 1 or 2 in worldspawn()
+   
+   All trigger changelevels should set spawnflag 1 (no intermission).
+   
+   makestatic(self) should instead call a function like void makestatic_maybe (entity e); that sets
+
+  	e.movetype = MOVETYPE_NONE;
+	e.solid		= SOLID_NOT;
+
+	and then does NOT makestatic.  Currently makestatic is not supported for intermap. 
+   
+6.  r_editlights_save [shift_x] [shift_y] [shift_z] optionally move the lights when saving... 
+	For example: r_editlights_save 0 0 1000, which would save with the lights
+    moved up 1000 units.  Enables possibility of moving all rtlights and then saving if you wanted to
+    combine multiple maps together.
+    
+7.  Removed sound played when copying data to clipboard, it actually caused slight tearing.
+               
+TODO: For reasons unclear, gamedir change can sometimes lead to showfps 1 not being rendered.
+TODO: I noticed cvar behavior is not always 100% right with gamedir changing.  DarkPlaces Beta at github
+has some new fixes need to investigate.
+
+
+// Zircon Beta Release 36
+
+1. "quit" now works with command line.  c:\quake\zircon_beta_gcc.exe "+do this" +quit // works!
+
+2. "map" prints map name, whether the map has wateralpha support, whether the map has visibility data
+   and prints the worldspawn keys.
+   
+3. "copy ents" will open the maps/start.ent file and use that instead if found.
+
+4. "envmap auto" creates an environmental map from the current position in jpeg format with a size of 
+   512 x 512 and outputs to env folder.  Among other things, can be used with
+   https://danilw.github.io/GLSL-howto/cubemap_to_panorama_js/cubemap_to_panorama.html to create a 
+   cubemap for an environment effects shader.
+   
+5. "envmap auto" autocompletes
+
+6. "jack_scripts" command line now scrubs "animmap", "dp_camera", "qer_alphaFunc"
+
+7. Maps can specify a "sv_progs" "progs.dat" worldspawn key.  That progs.dat will be used by the server
+   when the map loads.
+
+// Zircon Beta Release 35
+
+1. A preprocessor macro had wrong punctuation, caused improper expansion of $macros in aliases and perhaps
+   other side effects.
+
+2. More thorough checking Q3 maps to determine if have light data.  Some q3map2 compilers produced maps that
+   DarkPlaces Beta report as having light data, yet do not.  Tested a number of Quake 3 maps.
+   
+   I am slightly concerned about an unusual Quake 3 map that may be affected by this change, such as possibly
+   a map without only .rtlights or perhaps lit in some manner permitted by DarkPlaces that I do not have a test
+   case for.
+
+3. Fixed builtin +zoom macro.
+
+// Zircon Beta Release 34
+
+1. Zero Ping Movement Option (sv_allow_zircon_move 1)
+   Requires cl_movement 2 in single player
+
+2. Quake Rerelease Improved.  There were missing
+   QuakeC builtins in Zircon.  There are more than one
+   version of the Quake Rerelease.  I hope Zircon is now able to play it regardless of version.
+
+3. New DarkPlaces Beta fix from github for certain real-time light situations that could cause memory corruption.
+
+4. Improvements and hardening of Zircon protocol extensions and refinement from extra compatibility testing.
+
+5. Improved makefile.
+
+// Zircon Beta Release 33
+
+1. Quake Rerelease addressed "unbound keys upon startup because there is no default.cfg".  If the
+   Quake Rerelease is detected and default.cfg is missing, use internal hardcoded default.cfg
+   which is identical to original Quake default.cfg with the following exceptions:
+   
+   - Movements keys are WASD
+   - "<" and ">" are next and previous weapon (impulse 10, impulse 12).  The actual keys are "." and ","
+   - Sensitivity is 9 instead of 3.
+   - Always run starts "on". (cl_forwardspeed 400, cl_backspeed 400)
+   
+2. "sv_players_walk_thru_players 1" -- players can walk through other players.  This is done by setting
+    each player to "clipgroup" "1" (a QuakeC field) when PutClientInServer occurs. 
+
+3. Adjusted built-in +zoom alias.  DarkPlaces preprocesses "$" and we needed 2 of them, not one.
+   -zoom had only 1 "$", this was causing "missing variable" to print to screen.
+   
+4. developer_keycode for debugging (will print keycode information when keys are pressed).
+
+5. developer_zext for debugging (prints Zircon protocol extension information).
+
+6. "sv_clmovement_soundreliable 1" -- will cause sound messages to client to be reliable.
+ 
+7. Communication of entity bounding boxes to clients with Zircon extension that supports it.
+
+// Zircon Beta Release 32
+
+1. French keyboard ...made "Superscript 2" key work on French keyboard.
+   Superscript 2 is AZERTY keyboard key that lives in the same place as "tilde" does and is expected to toggle the console.
+   (This problem is caused by SDL2.dll and the statically linked SDL2 behaving differently, SDL2.dll returns keycode 96
+   and statically linked SDL2 returns keycode 178).
+
+// Zircon Beta Release 31
+
+1. Fixed client-side collision against inactive entities.
+
+2. DarkPlaces server connections no longer collide against monsters
+   as this was causing collision against dead monster bodies as well.
+
+3. Zircon server enhanced communication of non-solid entity states
+   now includes MOVETYPE_FLY and MOVETYPE_FLYMISSILE when not marked
+   FL_MONSTER.
+
+4. "entities 2" print collision box sizes.
+
+5. "sv_pext 0" disables Zircon server protocol extensions.  Requires new map / restart level to take effect.
+   "cl_pext 0" disables Zircon client protocol extensions.
+
+6. "status" shows server extensions code.
+
+7. Fixed a crash scenario when a server contains "%0" or such in an alias.
+
+// Zircon Beta Release 30
+
+1. "showmodel" command displays a model with optional <frame number> <z origin adjust> <scale>
+
+   Example: showmodel progs/player.mdl
+   Example: showmodel progs/player.mdl 3 -20 2 // frame 3, move down 20 units, scale = 2 
+
+2. Pressing TAB in the sbar if cl_movement is activated in single player ("cl_movement 2") will show
+   prediction mode like "DP7"
+   
+3. Fixed Linux compile, the gcc compiler for Ubuntu did not like some of the function prototypes.
+
+// Zircon Beta Release 29
+
+1. Zircon now supports static entities (func_illusionary, torches, anything makestatic) with:
+   alpha, colormod, scale, EF_ADDITIVE, EF_FULLBRIGHT via a protocol extension 
+   (ZIRCON_EXT_STATIC_ENT_ALPHA_COLORMOD_SCALE_32) 
+
+2. Zircon now transmits render flags as 32-bit unsigned integer instead of 8-bit unsigned char, if the
+   client reports extension ZIRCON_EXT_32BIT_RENDER_FLAGS_16.
+   
+   And in the render flags, Zircon server will add NON_SOLID_256 flag that a client with ZIRCON_EXT_NONSOLID_FLAG_8
+   can use to collide against monsters, but not non-solids (SOLID_NOT, SOLID_TRIGGER, SOLID_CORPSE).
+
+3. "entities" console command .. includes non-solid flag column.
+
+4. svc_updateuserinfo >= cl.maxclients better message, it occurs when connecting to some Quakeworld servers,
+   and the new output indicates that cl.maxclients is not being allocated to 32 early enough during the connect.
+    
+5. Zircon protocol extension communication adjustments during connection.
+   
+6. "developer 1" will print Zircon protocol extension communication events to console (client tells server what
+   extension it has, server will check against own extensions --> server replies shared extensions that will be
+   in effect).
+
+7. "developer_stuffcmd 1" will print stuffcmd messages to the console, this was added in inspect maps or mods 
+   for development to see how something is working or for bug testing.
+
+8. "developer_svc 1" will print svc parse messages like svc_centerprint ignoring the common svc messages.
+   Set to 2 and it will print them all.
+   
+9. "cl_movement_collide_nonsolid_red 1" will make prediction non-colliding models glow red.  For development
+   purposes.
+   
+10. "r_drawentities 10" will only draw entity #10 (type "entities" to see what is an scene), it does not show
+    static entities like torches or func_illusionary.
+   
+TODO: Still no mechanism for collision against entities with no model, completely invisible and perhaps
+   other corner cases.
+
+// Zircon Beta Release 28
+
+1. Changed: the previous implementation of Quakeworld collision with monsters also collided with dead/dying
+   monsters.  Quakeworld identifies monsters with a hardcoded list like progs/soldier.mdl so added a table of
+   death frame numbers and during those frames, monsters are treated as non-solid.
+   
+2. cl_movement 2 will force prediction even in single player. 
+
+TODO: The implementation of Zircon client-side collide monsters missed a small but important detail, the RENDER
+flags are transmitted to the client as a byte (0-255 value range) stripping the NON_SOLID flag 256, making it
+not work.  Still looking for a non-intrusive backwards compatible way to convey this information without using
+a protocol extension.
+
+// Zircon Beta Release 27
+
+1. "showtex 2" now collides with water and sky surfaces and shows texture in a corner of screen.  "showtex 1"
+   "showtex 1" does not collide against translucent surfaces (water, lava, certain other types of textures).
+
+2. "copy tex" will copy the texturename of the current texture being pointed to (like showtex 1) does.
+
+2. Cheats like "give" and such were tied exclusively to the sv_cheats cvar.  Zircon now uses the same scheme
+   as Quake (if deathmatch, no cheats).  sv_cheats 2 will allow "give" and "god" to work in deathmatch.
+
+3. net_slist_queriespersecond increased from 20 to 200.  Make server list fill in way faster -- about 1 second
+   versus 7 seconds, ping times shown are less accurate.
+   
+4. Quake 3.  If a shader has "rgbGen exactVertex" (DarkPlaces does not have this implemented) Zircon will 
+	substitute "rgbGen vertex" which often look about the same.  TODO: Read the specs and see about implementing exactvertex
+
+5. Fixed a buffer overrun scenario in wad.h caused by DarkPlaces looking for textures exceeding 15 characters
+   in a .wad file (the cleaned up texture name does not get null terminated if length is 15+, solved by simply
+   returning "not found" if strlen is 16 or more.) 
+
+6. Prepared source code for clean implementation of Zircon "0 ping multiplayer", had to reorganize some code
+   and make some clarifications.
+
+// Zircon Beta Release 26
+
+1. Client-side prediction now blocks against monsters (cl_movement_collide_models 1) -- you don't want to walk
+   through monsters, feels wrong and this is normal behavior for DarkPlaces and Quakeworld.
+   
+   (What happens is that the server will correct your movement saying "no you didn't move that far", but
+   depending on the ping -- it can feel weird!) 
+
+	Server is DarkPlaces, the player will collide against MOVETYPE_STEP / RENDER_STEP entities (no collision vs. scrags).
+	Server is Quakeworld, the player will collide against monsters hardcoded into the engine (the Quaekworld tradition).
+	
+	Server is Zircon, the player will collide against entities model bounding box
+	  IF entity is NOT marked "SOLID_NOT".  (Or SOLID_TRIGGER or SOLID_CORPSE).
+
+	This data is transmitted via the RENDER_SOLID_NOT_BAKER_256 flag 
+	(funky name is so it can be found in source code).
+	
+	This means Zircon client to Zircon server clientside prediction collides based on the QuakeC solid flag.
+	Except that Zircon client does not know collision boxes set in QuakeC setsize that differ from
+	the model bounding box.
+	
+	Mods that use (sv_gameplayfix_setmodelrealbox 1) and do not setsize on models, the collision size should
+	be identical.  DarkPlaces with standard Quake does not use sv_gameplayfix_setmodelrealbox.
+	
+	Short version:  The Zircon to Zircon clientside collision is better, Zircon to Quakeworld coop collision
+	is better than Quakeworld's and Zircon to DarkPlaces collision is better than DarkPlaces (which doesn't 
+	collide against monster AND falsely collides against func_illusionary map models).
+
+2. Zircon was not asking for chunked downloads from the server when using DarkPlaces Protocol 7 (Zircon default).
+	Fixed.
+	
+3. "entity" command has a column header.
+
+4. cl_movement 2 .. to force cl_movement in single player.
+
+// Zircon Beta Release 25
+
+1. Zircon supports chunked downloads as a server.  In tests, the download speed was 17 times faster
+   than the maximum I can get DarkPlaces to do, and the top speed is over 100x faster than 
+   the DarkPlaces default settings.
+
+2. Quake 1 .LIT file download for Quakeworld.
+
+   Quakeworld map downloads attempt the map .lit file first for any missing map download.
+   Quake maps often come with a colored lights file, like e1m1.lit and this is part of the map
+   experience.
+   
+   This works because Quakeworld servers are very liberal about allowing downloads
+   from the maps/ folder.
+   
+   For the same reasons, trying to download skyboxes is likely futile because those are in
+   gfx/env folder and a typical Quakeworld server will disallow.
+   
+   Unfortunately, by default, DarkPlaces servers disallow many kinds of downloading (this is not true 
+   of Zircon).  Eventually I have the DarkPlaces protcol do similar.
+
+3. No more .tmp files when downloading via chunked downloads.  Downloads for chunked downloads are
+   written to memory as they process.
+   
+
+// Zircon Beta Release 24
+
+Updated the source to get the Linux compile to work, also supplying Linux SDL and dedicated server binaries.
+
+1. Zircon now supports FTE protocol extension for large entity counts for Quakeworld (2048 entities, the Quakeworld standard is 512).
+   On an FTE server running large coop maps, sometimes entities were invisible without this extension because they
+   exceed the Quaekworld limit of 512.  This isn't just more recent maps -- hip1m3 -- one of the more prominent mission pack levels
+   featuring a mining tunnel with train tracks leading down is one example of a map that requires large entity count support
+   for Quakeworld.
+   
+2. cl_movement does not affect locally hosted games (that means single player or if hosting a game !sv.active)
+   cl_movement 1 was interfering with, say, typing "impulse 9" in the console or "freezeall".
+
+3. Scrags are now movement interpolated.  All monsters (FL_MONSTER .flag in QuakeC) get RENDER_STEP which
+   causes DarkPlaces client to interpolate the movement.  This is sv_gameplayfix_monsterinterpolate 1,  Set to
+   0 to turn this off.  I know of no convenient way to test this, it mostly affects scrags and they don't
+   move very fast.  However, I saw this listed at an issue at the DarkPlaces github.
+
+4. Setting sv_protcolname will now disconnect first.  In DarkPlaces Beta, running a map in DP7 and typing "sv_protocolname Quake; kill" will crash the engine
+   as there is some confusion on the right method to shutdown the server.  Disconnecting was the cleanest way to solve the problem.
+   
+5. force_centerview sets roll to 0.  During testing on various coop servers, very rarely my roll angles from a telefrag could get tilted.
+   "force_centerview" will clear that situation now.
+
+6. ALT-ENTER limiter only prints "please wait 0.4 seconds" instead of having extra floating point digits.
+
+7. Console prints when "coop 1" sets "deathmatch 0" on start of a map.  It is standard Quake behavior
+   to set deathmatch to 0 if coop is non-zero.  It's a rareish situation and rather than mysteriously
+   do something silently, Zircon will at least print it to console.
+
+// Zircon Beta Release 23
+
+1. Fixed a typo that caused connection issues with DarkPlaces servers.
+
+// Zircon Beta Release 22
+
+1. Chunked downloads 4 times faster.  
+
+   Modified some of the network code for more flexible unreliable messages,
+   allowing Zircon to request more chunks at a time.
+
+2. Zircon clients connected a Zircon server will automatically perform gamedir change.  For reasons unknown,
+   DarkPlaces doesn't do that except when connecting to Quakeworld servers.
+
+3. Zircon supports protocol extensions for DarkPlaces Protocol 7 (the main DarkPlaces protocol).
+
+   This will allowing adding more capabilities in Zircon while remaining compatible with DarkPlaces.
+
+4. Quakeworld weapon switching behavior in single player should closely mirror regular Quake, added default
+   infokeys b_switch and w_switch with values of 9 to cause automatic weapon switch.
+
+5. "spectators" infokey set to 0 instead of "" to indicate "join" seems to work better with MVDSV servers.
+
+6. Tweaked definition of spectators to include 1000 health or more for CRx servers, a hack until
+   I discover why sometimes there is a spectator state that remains undetected.
+
+NOTE: hip1m3 rock doesn't show when playing on Let's Coop Quakeworld server.
+NOTE: Add a "join" hint to spectator overlay?
+NOTE: The multiplayer scoreboard could be nicer and more legible.   
+   
+// Zircon Beta Release 21
+
+1. Quakeworld monster movement interpolation.
+
+2. Improved Quakeworld spectator behavior, the movement is smooth and displays a status bar.  This required
+   adding new client side prediction code for spectators and working and some changes in view presentation
+   for spectators.  Although DarkPlaces doesn't strictly support spectators, it is possible to get spectator
+   status in DarkPlaces if no live player slots are available on a server.  A manual way to force this in DarkPlaces
+   is "setinfo spectator 1; connect 72.83.103.37:27504".
+   Zircon supports "join 72.83.103.37:27504" and "observe 72.83.103.37:27504" and "join" "observe" in-game commands.
+   These commands work additionally because Zircon reports the required z_ext for live switching from spectator to join.
+   
+3. cl_chatmode - When in a multiplayer game, text typed in the console will chat in-game if it isn't a known command/cvar/alias (cl_chatmode 0 is disable).
+
+4. Quakeworld "serverinfo" cmd.
+
+5. Hardened against trying to record a Quakeworld demo, DarkPlaces doesn't support recording them or playing them.  
+   Also fixed a infokey NULL pointer scenario that shouldn't happen, but somehow I encountered it during a server network handshake gone wrong.
+
+NON-ISSUE:	Issue with water jump and Quakeworld that also affected ezQuake.
+			Freewill, who runs the "Let's QW Coop" server says is MVDSV server bug.
+
+// Zircon Beta Release 20
+
+1. Server browser phase (4.1) - tiebreaker bias cvar: net_slist_tiebreaker defaults to "coop,crx,ffa @,ffa"
+   
+   The effect of this tiebreaker system is that in a list of 700 servers, this push servers with those words
+   to near the top of the list for the default sort.
+
+2. Using the maps menu puts "map dust // A Dusty Place" in the console history instead of just "map dust".
+
+3. Quakeworld colored text support.  
+
+  The console print messages are on-the-fly translated to the DarkPlaces color
+   method.  This allows red or blue or other colored text to correctly display when connected to a Quakeworld
+   server that uses it.
+
+4. Better support for Quakeworld "join" and "observe" including an extension to support live switching.
+
+   > join 72.83.103.37:27504 // You will connect to the Quakeworld server as a player
+   > observe 72.83.103.37:27504 // You will connect to the Quakeworld server as a spectator ghost
+   > join --> You will enter the game if you were a spectator
+   > observe -> You will leave the game if you were a spectator
+
+5. Server browser: DarkPlaces and Quakeworld servers are queried and rolled together.
+
+6. Added the Quakeworld "userinfo" command.
+
+TODO: CF_PERSISTENT does nothing!
+TODO: Shorten the 2 sec ALT-ENTER delay -- determine when it is too early in map load for ALT-ENTER by engine state
+
+// Zircon Beta Release 19	
+
+1. Server browser (phase 4) implementation.  The server browser is sortable by clicking
+   "player" or "pings" and can be sorted ascending or descending.
+   
+2. Server browsers shows player names and their scores and shirt/pants color.  Thanks to Spoike author of FTEQW 
+   for having code that parses the player data segment so I could examine it and learn.
+
+3. Server browser:  clicking a server selects it.  Double clicking connects to it.  This allows more meaningful
+   interaction with the server list, especially now that it shows players on the server and their scores.
+
+4. Windows key re-enabled, previously it was suppressed.  It was disabled early in Zircon Beta due to a stuck keys 
+   issue with DarkPlaces Beta.  The stuck keys issue has long been resolved.  (AllowWindowsShortcutKeys)
+   
+5. Menu navigation consistency everywhere: the up and down arrow wrap around on every menu that isn't 
+	maps list or server list.
+  
+6. Fixed a DarkPlaces Beta issue parsing Quakeworld map names from master server (needed to search for a newline character and terminate the string
+   there, then save the pointer for the players segment).  The bug would sometimes show map -> "dm4 0 33 3".
+   
+7. Hardened the alias model (Quake .mdl) loader against some unknown .mdl variant format that DarkPlaces
+   interprets as having -1838383 frame groups (netquakeworld.chickenkiller.com server), which explodes the engine.
+   Zircon detects this invalid framegroups scenario and will refuse model load unloadable, 
+   likely giving it the standard DarkPlaces missing model treatment.
+
+   Whatever "player_sleeper.mdl" is on that server, even Noesis model editor that is super Quake friendly and supports
+   tons of model formats cannot open that file.  So I don't know what that .mdl is or how one examines it.
+   
+8. Fixed oversight in deterministic server sorting.  Was using name for the unique key, not "cname" which is the unique key.
+   
+   DarkPlaces/Zircon live load the server list.   Determistic sorting means that there are "no ties" when sorting
+   the list of servers, which prevents the list from randomly re-ordering some entries as they fill in (bouncing around
+   all over the place).
+   
+   For Zircon, this matters more because you can navigate the list confidently while the list is updating because
+   Zircon locks the cursor to the entry.
+
+9. Menu total quality management --> refined LAN config menu and so other less used menus that had small issues
+   and fixed "Begin Game" menu to be more pleasing to the eye instead of having text print over the menu sidebar.
+
+// Zircon Beta Release 18
+
+1. DarkPlaces was tilting the view when a spectator in Quakeworld, so you would see things sideways.
+   This is because as a spectator your health < 0 so DarkPlaces thinks you are dead.
+   Fixed by also checking for spectator status.
+
+2. Tuned chunked downloads settings and prints.
+
+3. Fixed: Previous version broke non-chunked downloads by writing the file to wrong path.   
+
+4. Documented some "magic numbers" in the code.  DarkPlaces was checking for health of -666 and -2342.  So what
+   are those?  DarkPlaces placed a high value on Nexuiz, DPMod, Transfusion back in the day.  Turns out those
+   are magic health values in Nexuiz for observers and intermission.
+   
+   And adjusted the code to only check for those magic numbers if mode == NEXUIZ derived.
+   
+   This could prevent a future rare/weird where if you are dead and happen to be dead with
+   a "magic number" quantity of health, the display is different.
+
+5. Zircon now reports as "Zircon" in setinfo.  Previously it reported as "dp".
+
+6. When connected to a server, pressing TAB will display the map name plus title. "map: map title".
+   This keeps the traditional Quake behavior when playing single player of just saying "Introduction"
+   however when connected to a server, sometimes one wonders "What map is this?".
+   Sure you can type "map" or "status", but just pressing TAB is easier.
+   In single player, you always know what you are playing.
+
+TODO: Turn some cvars into commands.  There are many things that are annoying if they get reset on gamedir change
+and do not fall into any traditional settings category.  This is more obvious when using Quakeworld server as
+the gamedir may change, which DarkPlaces will reset many cvars.
+
+TODO: I don't trust what happens when a server changes map and a map is downloading in the non-chunked downloads
+method.  I also don't trust when this happens for chunked downloads, although they tend to occur fast enough that
+this rarely happens.  Maybe both of these are fine, but these scenarios need checked.
+
+// Zircon Beta Release 17
+
+1. FTE chunked downloads when connecting to Quakeworld servers.  It can be ten times faster.
+   Also added client support for FTE 256 visible entities (vanilla Quakeworld is 64 visible entities).
+2. Menu server list is re-entrant.
+3. Server list sorting is now deterministic sorting (means there are no ties when sorting, prevents server entries
+   with identical sort criteria from bouncing around randomly .. the super-key is the server connection address).
+4. Server list default sort is largest number of players, descending. 
+5. Submitting a command in the console will remove console backscroll.  I knew there was something
+   not "quite right" with the console backscroll sometimes but couldn't determine what it was.  That being said
+   submitting a command and not eliminating console backscroll was likely a deliberate choice by DarkPlaces.
+
+There are several supporting cvars like cl_pext, cl_chunksperframe, cl_pext_chunkeddownloads, 
+cl_pext_qw_256packetentities, developer_qw that can turn stuff off or print messages.
+
+// Zircon Beta Release 16
+
+1. In DarkPlaces, CTRL plus '-' shrinks console text size, CTRL plus '+' increases console text size and
+   CTRL plus '0' resets it, similar to the zoom keys in FireFox/Chrome.  Ctrl plus '+' was not working
+   because '+' is not a key (it is '=').  Fixed.
+2. Adjusted ALT-ENTER support to always allow when no map is loaded.
+3. "loadfont" autocompletes first parameter.
+4. Console was not drawing during map download when connected to server.  Fixed.
+5. cl_movement defaults 1
+6. Server browser improvements.  Phase 1.
+7. zircon_history.txt is now in the folder with the .exe, no more per gamedir history.
+8. Console displays while a download is occurring.
+
+// Zircon Beta Release 15 - December 5 2023
+
+1. Support for protocol 666 and 999 that Quakespasm and related engines use.  This means that
+   Zircon can play Quakespasm demos and connect to a coop game hosted by Quakespasm.
+   
+   Zircon can play single player using protocol 666 or 999 or host games in protocol 666 and 999,
+   but that typical DarkPlaces potential differences would still apply because of the subtle 
+   differences in DarkPlaces physics and interpretation of Quake and related factors.
+
+2. cl_startdemos 0 to not play demos mirroring Quakespasm (previously cvar name was nostartdemos).
+
+3. Dedicated server (zircon_beta.exe -dedicated 8) now supports the shift key and CTRL-V pasting.
+
+4. Resolved an issue with external texture loading for .mdl and probably other formats.  It was a
+   bug introduced in Beta #4 that improved external texture loading for maps, but changed 
+   external texture loading enough that replacement textures for .mdl and others were affected.
+   
+5. Disallowed ALT-ENTER during map loading phase, complications can arise from only partially
+	loading a model and then reloading its content.
+
+6. Con_Print "Using external lightmaps" for Quake 3 map format is restored to requiring "developer_loading 1"
+   which was the DarkPlaces classic behavior.  External lightmaps is somewhat normal for the Quake 3 map format
+   depending on the compiler options used and it didn't print in classic DarkPlaces and having it print suggests 
+   something out of the usual is occurring.
+
+7. As a past precaution, entering the menu released all keys to ensure no keyboard keys could be stuck.
+   The issue with stuck keys in DarkPlaces Beta was fixed in Zircon several versions ago and entering the
+   menu no longer releases key ups (since the bug no longer exists).
+
+MINOR: zircon_beta_gcc.exe (but not zircon_beta.exe) as server oddness with letting classic clients connect. 
+MINOR: DarkPlaces Beta bug .. the player setup menu, the colors of the image do not change.  
+TODO: Lan Config menu could use some "refinement".
+TODO: Floating island Quake Remaster investigation.
+
+// Zircon Beta Release 10 - November 26 2023
+	
+I don't feel this is hardened enough yet to release a binary.  Close but more needs to be done.
+
+1. Client side support for protocol 666 and 999.  Demos recorded with either of those protocols
+   in a compliant engine like Quakespasm should play back in Zircon.
+   
+   The server side support for 666/999 is incomplete and --- although that will probably happen
+   -- that isn't the end game here.  The end game is something else.
+   
+   It is likely that Zircon can coop when connected to a 666/999 compliant engine like Quakespasm,
+   although more testing is required.
+   
+2. sv_protocolname autocompletes
+3. zircon_beta_gcc.exe -- for reasons unclear -- neither shows up in LAN slist for regular Quake clients nor allows connections
+   for regular Quake clients (but other DarkPlaces clients work ok and it shows for them).
+   This is a bizarre puzzle.
+   DarkPlaces clients do not have "test" and "test2" ... ?  Rainy day todo?
+4. disconnect and stopdemo clear pausedemo state.
+5. Noticed that startdemos resume upon disconnect from a server or "stopdemo".
+   Resolved.
+
+// Zircon Beta Release 9 - November 26 2023
+1. Implemented DarkPlaces Classic method of rendering csqc 3d polygons
+   as the DarkPlaces Beta method, although it allows shaders, is incompatible
+   with DarkPlaces Classic R_BeginPolygon in 3D space.
+   TODO: Cvar control to decide method?
+
+2. AMD + Windows force gl_texturecompression_color to 0 to workaround driver bug (DarkPlaces Beta).
+3. Fix for Zircon Galaxy detection
+4. Better clearing on window creation (DarkPlaces Beta), may help odd effect I saw on Linux, plus
+   fix of gl context leak.
+5. Display (disconnected) in map menu if no map active
+
+
+// Zircon Beta Release 8 - November 24 2023
+
+1. Upgraded the SDL2 version zircon_beta_gcc.exe, which seems to resolve vid_restart weirdness.
+   Q: Does it resolve jakub1 sound weirdness?
+2. Fixed zircon_beta_gcc.exe odd behavior with vid_restart by upgrading the SDL2 library version.
+3. "cvarlist changed" will list changed cvars.  The "changed" autocompletes.
+4. Fixed Linux sv-release compile.
+5. Fixed "name" command on client did not update on server.  Issue was inherited from DarkPlaces Beta.
+6. "sv_gameplayfix_fiendjumpfix 1" -- the fiend and dog jump fix from DarkPlaces Beta.
+7. Added fte_extensions.qc to dpdefs folder in source code.  fte's documentation for some QuakeC functions is
+   invaluable.
+8. Multiplayer -> Join Game and Multiplayer -> New Game show local ipv4 (like 192.168.0.3) and ipv6 addresses in menu.
+
+// Zircon Beta Release 7 - November 23 2023
+
+1. Video menu reworked and includes "Always force desktop resolution" ON/OFF, and rewired to make sure
+   that classic video mode returns to the correct menu that entered it.
+   
+2. Fixed effects menu not allowing last item to be selected by keyboard.
+
+3. Video menu will never offer video modes greater than what SDL2 reports as the desktop resolution.
+   This was added because I noticed getting offered large video modes that I don't believe are supported.
+   
+4.  writeconfig_all <configname> writes all cvars to a file.
+	writeconfig_all_changed <configname> writes all cvars that are not set to their default value to config
+
+5.  vid_width, vid_height, vid_fullscreen updated before write to config.cfg.  Those cvars can have stale
+    values often from using the video menu but not submitting the change or by other means.
+    
+6.  During load a config file, messages saying "command gamma not found" will not occur.
+
+7.  "game" or "gamedir" specifying an existing empty folder works.  If the user created a folder
+    and it happens to be empty, they should be able to use that as a gamedir without the engine
+    denying them because there are no files in that folder.
+    
+8.  If you startup DarkPlaces and type "gamedir" it says "gamedirs active: "
+    I have altered this to 
+    
+// Zircon Beta Release 6 - November 20 2023
+
+1. Linux with GCC 9.3 now compiles, so the Linux compile should be pretty easy.
+2. Linux dedicated server build is now functional "make sv-release"
+3. Server browser was not showing gamename and map column.  It does now.
+4. Connecting to a server in the server browser adds it the console history.
+
+   So for instance, you can press up in console and get
+   
+   connect "47.190.124.73:26001" // PART1CL3.NET_COOP
+   
+   Notice how the console history recall even has the server name!
+   
+5. utf8_enable was allowing selection of text using shift.  It wasn't supposed to.
+   Currently text selection does not work correctly with utf8 (or color codes like ^5)
+   and utf8 was not supposed to allow text selection.  Addressed.
+   
+6. "reconnect" -- the command that occurs on the client when a server changes map
+   was showing flashing console on-screen (ugly) *only* when the server was remote
+   (like your ping is 30 or higher).  "reconnect" now does not show console
+   during loading. (Follow up: Should it be timeout proofed to X seconds in the event
+   there is trouble connecting or lag or that even an issue here?)  
+
+7. Incorporated Doombringer DarkPlaces SV_SpawnServer logic that looks like it sends the
+   reconnect to client at a more appropriate time during map change and everything still
+   seems to work ok.
+
+Punt: r_speeds 1 display looks unorganized.  Thought about tidying it up.  Going to
+kick the can on that.
+
+// Zircon Beta Release 5 - November 16 2023
+
+1. Added r_waterwarp (winquake underwater effect) / r_waterdeform (twist water) to effects menu.
+2. edicts [field name] [value] will find entities with that field equal to the value.
+
+	Example:  edicts classname player --> this will find anything with a classname containing player
+	          edicts model grenade --> this will find anything with a model that contains "grenade"
+	          edicts mod gren --> this will check any field with "mod" in the name and return
+	                               results with "gren" in the name.
+	                               
+    So yeah, it actually uses string partials for fieldname and value.
+    
+    edicts with 1 argument searches for classname.
+
+3.  Eliminated 2 instances of console drawing for a single frame.
+    First was on startup, the first frame seems to always draw the console (not any more!)
+    Second was on new map (not any more!).
+
+// Zircon Beta Release 4 - November 16 2023
+
+1. Rewrote part of texture loader to more resemble DarkPlaces classic while keeping the intent
+   of the changes in DarkPlaces Beta.
+   
+   This fixed texture scaling with "tcmod scale" with Quake_Rivarez_Ed_v1.0.1.
+   And should fully fix "textures/[mapname]/[yourtexture].tga"
+   
+   And hopefully will fully address water and animated issues that previously existed.
+   
+   I don't conveniently have test cases for all of this, so not fully tested.
+   
+2. "infobar 5 your_message" sort of centerprints excepts as a subtitle.
+   The timing of this was wrong, corrected (it was displaying half the appropriate time).
+   
+   NEW:  Since it is basically a different kind of centerprint, I have it log to console.
+   
+   To disable logging to console: "con_logcenterprint 0"
+   
+3. KleskBY likes "sv_gameplayfix_nogravityonground 1" because modern games don't have the player
+   slide down slopes and such.  However it didn't "work".  Or rather how it works was documented.
+   "sv_gameplayfix_nogravityonground 1" requires "sv_gameplayfix_downtracesupportsongroundflag 1"
+   to function right with Quake.  Added to documentation of sv_gameplayfix_nogravityonground cvar.
+
+4. TODO: Slight console flash during loading.
+
+
+// Zircon Beta Release 3
+
+1. 2020 XMas Jam map shades has .mdl using fence texture flag (16384).  The engine was processing
+   the skin as transparent, but not rendering as transparent.  Fixed.
+   
+2. tool_marker "-36 25 244" -- will draw a topmost red marker where that location is. 
+
+3. Theoretically fixed Replacement textures in "textures/yourmaps/cop3_4.tga" failing to work.
+   This issue was inherited from DarkPlaces Beta.  A decent chance I have it fully resolved.
+
+   CAVEAT: I don't have anything to really test this out.  I have a single texture test
+   from Jakub1.  Map specific replacement textures that collide with another texture map
+   are somewhat uncommon and I don't have one available for some more thorough testing.
+   
+   TODO: See if can improve upon solution for weird untested corner cases no one will likely
+   ever encounter, but I have an awareness that the texture load process in DarkPlaces Beta is
+   not directly equivalent to classic DarkPlaces.  This lack of equivalence may be involved in
+   some weird tcmod scale issues I have seen that have no cause I have been able to locate yet.
+
+// Zircon Beta Release 2
+
+1. Use /MT as Visual Studio compiler option.  This embeds the .exe with some dependencies
+   and reduces the need to download Visual Studio Run-times and such, which KleskBY
+   says applies to Windows 7 and can apply in other cirumstances.
+
+2. sv_gameplayfix_nudgeoutofsolid was defaulting 1, it is now correctly defaulting 0.
+   We are using DarkPlaces classic physics in Zircon (DarkPlaces 2014 physics).  This
+   artifact from new DarkPlaces physics wasn't removed.  Additionally: csqc 
+   droptofloor mirrors old logic, this was on a TODO before and is now completed.
+
+3174. "setpos" command.  Set origin and angles, for debugging. 
+
+106b. "tool_inspector 1" -- entities are now sorted.
+
+// Zircon Major Features
+
+0000. Mouse driven menu
+0001. ALT-ENTER support to switch from fullscreen to windowed mode.
+0002. Key setup streamlined order, elimination of "???" for unbound keys.
+0003. Thin console cursor, no cursor overwrite mode.
+0004. Ctrl + Up, Ctrl + Down adjust size the console like JoeQuake.
+0005. Crisp 2D autoscale based on 360 pixels of height (720 height is 2x magnification) with user customization possible.
+0006. LodePNG used for PNG loading.
+0007. Full auto-completion including SHIFT-TAB support and CTRL-SPACE autocomplete from nothing.
+      Autcomplete is context sensitive and even autocompletes skybox names.
+0008. Cut, copy, paste, select text and undo (CTRL-Z undo, SHIFT-CTRL-Z for redo) in the console.
+
+	  (* does not support color codes or UTF-8 at this time and will disable selecting text automatically
+	  while those characters are present.)
+
+0009. Will attempt to use -data directory if id1 folder not found and no -game specified.
+
+0061. DarkPlaces 2014 physics. Reverting to what I hope is traditional DarkPlaces 2014 engine physics which is what mods targeting DarkPlaces
+      from 2014 for traditional DarkPlaces physics.  New DarkPlaces physics had immediate issue with Quake Combat+ on E1M1 (a soldier falls 
+      through floor) and some Alkaline map printing droptofloor issues (one would naturally assume that
+      in Quakespasm does not do this).  DarkPlaces 2014 physics do have issues with classic Quake occasionally, a great 
+      example is E4M7 zombies above water after killing the zombies below water in the start of the map, but this does allow Zircon
+      DarkPlaces Beta to correctly play mods made for DarkPlaces like Quake Combat+.
+0070. "record" a demo at any time.  This feature is AFAIK not legitimately possible in DarkPlaces, some evil
+      some evil occurs to make it happen.
+0071. Maps menu (replaces Main->Help and Ordering) (pk3 containing menu replacements elements available in zip)
+0072. Maps menu selected maps are added to console history for recall/reload with uparrow.
+0073. Maps menu shows current map
+0074. Maps menu is reentrant (selecting a map and then entering the menu will return you to the map menu
+      with the most recently selected map still selected).
+0081. Quake Remaster status bar option (sbar_quake 2) and original Quake status bar option (sbar_quake 1).
+0082. r_waterwarp 2 twisty underwater effect.
+0083. r_waterdeform 1 WinQuake-like water/slime deformation.  r_waterdeform 2, lava and teleporters too.
+0084. BloodOmnicide DarkPlaces "roundwave" and "bulge" shader deformation support
+0085. FitzQuake noclipping (sv_altnoclipmove 1 defaults on).
+0086. OBJ maps are first class citizens for "maps" and maps menu (which replaces help/ordering).
+      Kleskby makes maps in obj in Blender and DarkPlaces Beta supports them.
+      You can also turn a model (like start.bsp) into obj with DarkPlaces "modeldecompile" command like
+      "modeldecompile maps/start.bsp".  
+      "modeldecompile" has autocomplete listing Q1 models.
+0087. Fence texture model support for Q1 .mdl. (xmas jam 2020 shades map trees was test case)
+0088. Status bar some portions reworked, particularly with +showscores held.
+0089. Intel Graphics cards that report "No errors." on shader compile no longer spam console as if shader compile error occurred.
+0090. "freezeall" command to stop "time" except for the player.  This toggles a cvar with a long name that already exists.
+      And we reset sv_freezenonclients on new map (SV_SpawnServer) so it doesn't do strange stuff and removed the CF_NOTIFY so
+      using this isn't spamming the console.
+0091. Effects level in menu that allows easy setting of effects level (modelled after Xonotic's effects levels)
+0092. "con_closeontoggleconsole 4" -- exact Quake behavior of tilde key where it NEVER emits to console under any circumstance.
+      If you are used to Quake behavior it is highly annoying if the console is forced and you press tilde from habit
+      but the console cannot be closed and get a surprise "backquote" character typed in the console.
+      (Why do we call this the tilde key, but backquote is the unshifted?)
+      
+	  If you enjoy typing backquotes in the console, try con_closeontoggleconsole 0 to 3.
+	  
+	  "con_closeontoggleconsole 0" is the DarkPlaces default.
+	  
+0093. r_editlights_select_index, for use by r_editlights.  Allows selecting a specific light by the light #.
+      Can make the creation and editing of rtlights files more convenient. r_editlights_edit parameters
+      auto-complete as well.
+      
+0100. MAJOR MAP LOAD SPEEDUP FOR LARGE MAPS.  Mod_BSP_MakePortals only performed for Q1 and Q3 maps without vis data or when "r_novis 1".  Faster map load times by
+      not generating data that will not be used for a map with vis data, which is most maps.
+      This significantly reduces load times for large maps.  Set "mod_bsp_portalize 2" to force.
+0101. csqc_enable cvar, defaults 1.  Ability to turn off csqc.  Requires map restart.
+	  Any Quake single player mod that can run on vanilla Quakespasm, this is likely fine.
+	  Other situations, it may work or may totally break the mod (Quake Combat+, for instance).
+0102. Sound specification retry with lower specs on sound initialization failure (adapted from snd_main.c in classic DarkPlaces).      
+	  Quake_Rivarez_Ed_v1.0.1 tends to cause this scenario, asking for 8 sound channels.
+0103. Server browser more legible, more conservative, easier to read
+0104. All sv_allowdownloads (that seem helpful) default on [more testing needed].  
+	  Hardcoded disallow of "registered Quake paks" has been removed, this checked pop.lmp
+	  which might exist in any total conversion mod.
+	  
+	  (the open source X-Men Ravages of Apocalypse has a pop.lmp, for instance).
+0105. Uses Classic DarkPlaces lightning gun bolt.
+0106. tool_inspector - examine entities visually in-game
+0107. Optional separation of csqc rendering and the rendering of 2D elements (console, menu, etc.)
+
+	  This only occurs with	csqc_full_width_height 1.  vid_conwidth/vid_height are set as indicated for each phase.
+	  
+	  csqc can get the entire vid_width, vid_height and the menu can use a separate scaled canvas.
+
+0108. Slow loading mods automatically get a progress bar.  Grace period 1.5 seconds.
+      The effective result is that normal use of Quake never displays a progress bar.
+      However, if for some reason loading is slow (huge textures, tons of models, some other reason)
+      the 1.5 second mark is hit and the progress bar shows. 
+      
+      This is to avoid the feel of "nothing is happening" while largely never showing a progress bar
+      by default.
+      
+// Single player compatibility with Quake
+
+1001. Standard Quake file paths for loading/saving on Windows and Mac (-nohome, Linux we will do DarkPlaces way).
+1002. Standard Quake behavior for Q1BSP maps with no light data -- all entities in map render fullbright.  DarkPlaces beta differs from Quake and old DarkPlaces (div0-stable)
+1003. Standard Quake behavior for "map", "kill", etc. which close the console in Quake.  Full list: map, load <game>, restart, changelevel, connect, reconnect, kill.
+1004. Standard Quake appearance of bronzed characters (not yellow).
+1081. Standard Quake appearance of status bar as an option (status bar backtile option)
+1082. Standard Quake appearance of status bar/scoreboard, displaying total secrets, total monsters even if zero 
+1083. "edict" and "edicts" (also "csedict" and "csedicts") commands.  
+      "edict" and "edicts" are commands in standard Quake.
+
+// Single player compatibility with Quakespasm (FitzQuake 0.85) norms
+
+1201. "r_skyfog"    fog that looks like FitzQuake/Quakespasm which is defaulting fog alpha to 0.5 (r_skyfog value) if fog is not specified in map fogkey
+1202. "map"         command with no params says map name.  This is a behavior in Quakespasm and most modern Quake engines have this feature.
+1203. "game"        console command, same behavior as gamedir.
+1210. shot1sid shotgun shells texture fix, in most Quake engines since 2000 (look at shotgun shells on DM3 bridge)
+1211. 64-bit lightmap fix from Quakespasm
+1241. Max save games in save game menu to 20 mirroring other engines.
+1242. "sky"			Same as loadsky, this is the expected command and QuakeC that was not tested against DarkPlaces
+	  will almost certainly use "sky" to change the skybox in a Quake single player release.
+1243. "writeconfig" alias for "saveconfig"
+1244. FitzQuake explicit cheat commands and give armor (god, noclip, fly, notarget) 
+		"god 1" // Turn on god mode
+		"god 0" // Turn off god mode
+1245. FitzQuake give armor "give a 200"
+1246. FitzQuake "inc", "dec" commands "inc x 5" or "dec x"
+1247. "external_lits" cvar to allow option of not loading of colored light data.
+
+1301. Disconnect automatically when "game" / "gamedir" used if not disconnected.
+
+// Single player convenience
+
+1401. sv_cheats defaults 1.
+1402. Reset menu cursors on gamedir change
+1403. log_file_stripcolors defaults 1 for more readable console .log file.
+1411. "saveconfig" takes an argument so "saveconfig mine" is possible.
+1412. animated texture warning is now a developer print, this occurs quake start.bsp
+      Texture +0slipbot is animated (leading +) but has only one frame
+1413. Disabled Windows keys.
+1414. Automatic unload of "fte csqc-lite" csprogs.dat allowing convenient play of these mods (see alk1.2.zip @ Quaddicted)
+      This is an alternate CSQC that FTE/Quakespasm Spiked supports.
+1421. FitzQuake centerprint logging ("This hallway selects EASY skill" prints to console, some maps have important centerprint messages)
+1451. Less spam of clutter to console.
+1461. Eliminated message for missing beam.mdl, this is a virtually non-existent model no other engine precaches or warns about.
+      And any mod that actually uses it should precache it in QuakeC.  It is for TE_BEAM, a grappling hook effect.
+1462. Progress bar maxfps to 10 from 20 mirroring DarkPlaces classic.  The less this is on-screen, the faster content loads.
+1471. "maps" command only lists playable maps (info_player_start, info_player_deathmatch found).   This may not be compatible with
+      Xonotic / Quake3 /  mods that do not use those entity types.  Additionally, a md3 content replacement healthbox with a .bsp
+      extension is known to evade this filter and get printed (due to not falling into a BSP type).
+1481. Reduced message "spam" for ALT-ENTER and other frequent situations
+1482. ALT-ENTER with vid_desktopfullscreen (the default) uses 75% width/height for windowed mode automatically.
+1483. vid_resizable defaults 1.
+1484. -nehahra creates r_waterripple, r_oldsky, stopmod to prevent seeing missing cvar/command messages during play.
+1485. Write history file on gamedir change during session.  DarkPlaces saves history file to current gamedir and
+      this closes a "missing history" loophole.
+1486. History lines are always trimmed of trailing spaces, back-to-back same lines are not recorded to history.
+1487. Crosshair settings added to classic menu.
+1488. "r_viewmodel_ring_alpha 0.4" available to make gun translucent during invisibility 
+	  instead of entirely hiding it.  Works well with gl_polyblend 0 (which eliminates invisibility screen darkening effect).
+1489. "r_viewmodel_offset 5" available to make gun offset to side.
+1490. "r_minlight 3.5" option -- minimum lighting allowed on models, purpose is to make monsters/players
+      more visible in poorly lit areas for more enjoyable play.  
+      
+      Unlike DarkPlaces, this defaults to 0.5 which means monsters in total darkness are slightly lit.
+      
+      To disable this, do "r_minlight 0"
+
+// New commands / cvars
+
+3101. "copy" copies console to clipboard, "copy ents" copies map entities to clipboard.
+3102. "folder" command -- opens gamedir folder in file explorer.  "folder maps" would open the maps folder.
+3103. "pwd" command - prints current directory ("pwd" is a Unix command that shows current directory) 
+3171. "pos" command - prints current position, copies it to clipboard.
+3172. "nostartdemos" cvar - set to 1 and they do not start.
+3173. "cvar_reset"
+
+// Performance
+
+5001. Laptop friendly default cl_maxfps 144 (not 0 unlimited).  Laptops have 90% of personal computer marketshare.
+      Laptops have a battery and laptops have small cooling fans.  Rendering at 800 fps for no particular reason is
+      is not nice to a laptop battery and it is not nice to a laptop cooling fan.
+
+5002. cl_prydoncursor_notrace defaults 1 (off).  This does not need to run every frame.  I know of no mod aside from Prydon Gate that uses it.
+
+// Developer
+
+7001. freetype.dll that is friendly with Visual Studio 2022 and does not cause exception with ntdll.dll
+7002. Baker.h - tons of functions (file system, string, matrix, etc.)
+7003. csqc_full_width_height 1 will set vid_conwidth/vid_conheight to entire client area (like vid.width/vid.height) during csqc phase and then change it back
+7004. cvar if (cvar(csqc_full_width_height_available)) is a way for csqc to check for this.  Todo: check extension instead?
+7061. "modeldecompile" commmand (writes a model as .obj) converts * (asterisk) to _ (underscore) for sub-models so that they
+      can be written to file on Windows which will not allow asterisks in a filename.
+7062. textures/particles/lightning -> particles/lightning .. this is a change but all particle gfx live in particles folder 
+      and it is silly to have 1 file related to particles living in a weird place as the only member of its folder.
+7063. r_listmaptextures [optional partial to find] like "r_listmaptextures water"
+7081. showtex 1 displays only texture information, showtex 2 displays texture information and entity
+7082. showpos and showangles cvars.
+7083. showfps -1 shows fps in top right corner of screen where most other engines display frames per second
+7084. prvm_sv_gamecommands, prvm_sv_progfields, prvm_cl_gamecommands, prvm_cl_progfields, prvm_menu_gamecommands
+		These assist autocompletion with gamecommand extension.
+
+		Strike prvm_menu_gamecommands, there is no CF_MENU and I'm not testing against menu qc
+		at this time anyway ... future TODO
+		
+7101.  "edicts" with classname, targetname filter ability
+			> edicts targetname t18  ... prints edicts with targetname containing "t18"
+			> edicts info_player	 ... prints edicts with classname containing "info_player"
+			 
+7102.	"Failed to load sound" has been changed from a Con_Print (prints to console) to a DPrint
+		(prints to console if "developer 1") for identical behavior to DarkPlaces classic.
+		Mods may use a null.wav for a sound that they don't want or as a placeholder, and mods
+		that did this had the expectation it wouldn't print to console. 			 
+
+7103.	Autocomplete support "sv_cmd" and "cl_cmd" console commands (this is DarkPlaces 
+		"gamecommand" extension).  The QuakeC can set prvm_cl_gamecommands or prvm_sv_gamecommands
+		to a space delimited list like "sv_cmd volcano rain snow", the engine will offer 
+		rain, snow, volcano as autocompletes for sv_cmd.
+
+7104.	r_editlights_dlight_bake - combined with a QuakeC tool, this assists in relocating
+        Quake 3 dynamic lights generation to a rtlights file in the expected location.
+		
+7105.	"jack_scripts" -- a tool to make a copy of Q3 shaders with things that J.A.C.K. map editor 
+		doesn't understand.
+        The J.A.C.K. map editor has "blocking" warning messages, so if there are hundreds of warnings
+        saying it does not recognize shader command "dpoffset" or such, it can delay startup by a fraction
+        of a second times 500, which can total a minute or 2 and is very annoying.
+        The output is the "_jack_scripts" folder.
+        It also updates scripts/shaderlist.txt
+        		
+// Zircon
+
+8001. "zircon_command_line.txt" support.  If file exists in .exe folder it contains command line params like "-game travail +map start -condebug" and if engine is started with no command line parameters, these are used
+8002. Zircon console name - including build name
+8003. Zircon changes the progress bar color default from blue to gray.
+8011. Removed progs/v_nail2.mdl from r_nolerp list to mirror Zircon
+8012. Removed deathmatch mini-overlay
+8013. r_nearest_2d and r_nearest_conchars default 1.  r_nearest_conchars cvar updates texture in real-time.
+8081. Demo playback does not capture mouse cursor.
+8082. scr_loadingscreen_barheight defaults 0 (previous value was 8), added it as a menu setting.
+      (The loading bar reduces the immersion into the game for me.  It looks great for Quake 3 style.)
+8083. showfps only displays a framerate if fully connected cls.signon == SIGNONS_4
+8084. crosshair color defaults to gray (previously red)
+8085. "scr_clock" ProQuake looking clock option 0/1, shows level time in status bar
+8086. showfps never displays in red
+8087. Cvars that DarkPlaces Beta prefixed with cl_ while maintaining aliases (showtex, etc.) have had their cl_ form removed to
+      reduce cvar and that it seems unlikely there is someone who likes to type more to access a previously existing cvar especially if the alias exists.
+      The namespace of cvars beginning with cl_ is already heavily populated.
+8088. Removal of the new "timescale" alias, a cvar alias for host_timescale.
+      There is no need for aliases for an uncommonly used cvar that already a standardized name.
+      host_timescale is the name by used other Quake engines and the Valve source engine.
+8089. sbar_scorerank and sbar_gametime game time removed.
+8090. sbar_showprotocol (defaults 1) shows server protocol discretely if +showscores active and playing connected to a server.
+8191. Server to client communication of single player skill level (nightmare, easy) in a way that is ignored by DarkPlaces or regular Quake clients.
+8192. "cl_maxconsole_menu_fps" (defaults 72)  when not hosting a multiplayer game, frame rate is throttled when 
+		in the console or menu.  DarkPlaces already throttles when not the active window, this closes a loophole
+		where another situation where runaway frames per second can occur with no benefit to the user.
+8193. cl_rate default increased to 9 999 999, reduce time waiting for models/maps to download.
+
+// DarkPlaces Bug Fixes
+
+9001. viewzoom CL default fix.  Avoids zoom effect on the start of every Quake map by reseting cl viewzoom field.
+9002. DarkPlaces Beta gamedir switch crash bug-fix.  This has a few different pieces.  Rewrote hash unlinking code.
+      In total, 3 or 4 separate areas were gamedir change affected cvars negatively were addressed.
+      I believe that it is entirely fixed in full now, but I am going to keep an eye on this.
+
+9003. Clear models/sounds as stale on gamedir change, they aren't valid any more -- avoid errors/issues with wrong content and stale data
+9004. Fire Key release on ALT-TAB or minimize (if holding +forward and then ALT-TAB at same time, you will walk forward forever in current dpbeta on Windows)
+9005. Quakespasm's Windows DPI awareness trick, fixes menu placement and other 2D elements when Windows scaling is not set to 100% but a higher value like 125% or 150%
+9006. Kleskby ALT-TAB fix for certain international keyboards. (I'm not sure it belongs in CL_UpdateScreen though ... the important part is that it works ...)
+9007. Maps of type .obj did not have loadmodel->lit set.  It is true that .obj does not have lighting, but should act as if it does
+      so that DarkPlaces dynamic lighting or other methods can light the map.
+9008. Q3 lightstyle support for world (Hemebond pointed this out on DarkPlaces Github), adapting what 
+      classic DarkPlaces does to the DarkPlaces Beta rendering scheme.
+9011. DarkPlaces Beta was only loading the first q1bsp sky.  Successive map changes, a q1bsp sky was always ignored so as a result E1M1 would have a purple start map sky instead of a blue sky.
+9012. More ALT-TAB key release hardening and made in_releaseall clear kbutton structs.
+9061. DarkPlaces Beta gamedir switch crash had 2 more factors.  Resolved.  Also rewrote the hash unlink code (although it does not zfree the hash, should it?  DarkPlaces Beta doesn't.)
+9062. Clear models/sounds was partially ineffective due to new DarkPlaces Beta different order of events, fixed.
+9063. (FIXED, BUT POSSIBLY NOT THE RIGHT FIX).  Quake Combat+ map E1M2 bridge, DarkPlaces Beta shows blue light and DarkPlaces classic does not.  The .rtlights file
+      has negative rgb values for some colors (3.540270 -0.000000 -2.528764).  Zircon DarkPlaces Beta clamps the RGB values on
+      read to a minimum of 0.  However, this cures only the effects of a yet identified difference, the root cause has not
+      yet been identified.
+9064. Fixed -> Real-time light editor display unaligned and the end of color data spanned beyond the box.
+9065. cmd.c -> Baker r9065: a theoretical physics correction (probably.  I know of no way to mass test to prove or disprove)
+        .. sv_gameplayfix_droptofloorstartsolid 1 for Quake instead of sv_gameplayfix_droptofloorstartsolid 0.  Testing various versions of DarkPlaces, this change was introduced
+        in 2012 at some point, if I recall (I investigated this thoroughly at the time comparing source codes of DarkPlaces 
+        of making this change in Zircon classic).  I used a map "cdestroy" which had always played ok in DarkPlaces which
+        has rotweilers outside the first door.  At some point, these rotweilers no longer dropped to floor correctly.  I identified the
+        first version where this occurred and the change that occurred.  I have so far seen no counter-indications and have
+        seen incorrect behavior that this has resolved on multiple maps.
+9066. gl_texturemode is reset on gamedir change.  Quake 1.5 causes a problem setting this to something else (nearest?) making
+      the console conchars all jagged.  gl_texturemode is not a cvar, therefore it does reset on gamedir change, this is done manually in cmd.c.
+      I would file this as a mild bug since gamedir change is supposed to reset everything.
+9067.  (IMPLEMENTED BUT DISABLED, HOPEFULLY NOT NECESSARY) This bug seems to be a non-issue in DarkPlaces Beta for reasons I have not yet identified.
+	   DarkPlaces supports the server precaching models and sounds after start of a map.  However, on loadgame 
+       single player client, entities using these precached models only get the "standard QuakeC" precache list.
+
+		(NON-ISSUE) ?  DarkPlaces Beta handles many things differently including network.  It is possible that
+		DarkPlaces closed a loophole somewhere in the order of events, messages or in the precache process.
+		This bug is hard to produce in DarkPlaces 2014 and I can't cause it in DarkPlaces Beta at all so far.
+		(TODO: Examine DarkPlaces Beta and find out what changed.  My best guess: DarkPlaces fixed the issue
+		client-side, which is the correct fix.)
+
+9068u. FIXED. DarkPlaces Beta often gets keys stuck.  Key_Event in DarkPlaces Beta used Cbuf_InsertText
+       instead of Cbuf_AddText ... reversing the order of queued key events resulting in key releases
+       occuring before key presses, causing keys to be permanently stuck sometimes.
+
+Unfixed or Unverified Bugs ...
+
+9070u. Lightmaps don't render for the first frame or 2 (sometimes).  I suspect the first couple of frames
+       that they haven't uploaded yet.
+
+9072u. UNINVESTIGATED SO FAR: I saw Linux print segfault on shutdown.  Does it still happen?  
+
+
+9073u. NOT FIXED YET, BUT MITIGATED.  Quake Combat+ map E1M2 start, the shader for *water1 contains tcMod scale 0.05 0.05 which according to 
+       Q3 Shader reference should decrease the size of the texture, making it repeat.  Instead, of shrinking the texture, it
+       enlarges it (the opposite).  There are other tcmods in the mix tcMod stretch sin 1 .001 .05 .2 and tcMod scroll 0.016 0.01
+       and it is not clear why this occurs and although this is behavior difference between DarkPlaces Beta and DarkPlaces classic,
+       it is not known if this is a bug or if DarkPlaces Beta is correctly applying the shader.
+
+       The shader text is:
+
+*water1
+	surfaceparm water
+	surfaceparm nomarks
+	surfaceparm trans
+	deformvertexes wave 10 sin 1 1 .1 .6
+	{
+		blendfunc blend
+		tcMod stretch sin 1 .001 .05 .2
+		tcMod scale 0.05 0.05
+		tcMod scroll 0.016 0.01
+		animmap 18 textures/causticBr/FWATER01.png textures/causticBr/FWATER02.png textures/causticBr/FWATER03.png textures/causticBr/FWATER04.png textures/causticBr/FWATER05.png textures/causticBr/FWATER06.png textures/causticBr/FWATER07.png textures/causticBr/FWATER08.png textures/causticBr/FWATER09.png textures/causticBr/FWATER10.png textures/causticBr/FWATER11.png textures/causticBr/FWATER12.png textures/causticBr/FWATER13.png textures/causticBr/FWATER14.png textures/causticBr/FWATER15.png textures/causticBr/FWATER16.png textures/causticBr/FWATER17.png textures/causticBr/FWATER18.png textures/causticBr/FWATER19.png textures/causticBr/FWATER20.png textures/causticBr/FWATER21.png textures/causticBr/FWATER22.png textures/causticBr/FWATER23.png textures/causticBr/FWATER24.png textures/causticBr/FWATER25.png textures/causticBr/FWATER26.png textures/causticBr/FWATER27.png textures/causticBr/FWATER28.png textures/causticBr/FWATER29.png textures/causticBr/FWATER30.png textures/causticBr/FWATER31.png textures/causticBr/FWATER32.png textures/causticBr/FWATER33.png textures/causticBr/FWATER34.png textures/causticBr/FWATER35.png
+	}
+
+    Q3 Shader Reference
+
+    tcMod scale <sScale> <tScale>
+    Resizes (enlarges or shrinks) the texture coordinates bymultiplying them against the given factors of <sScale> and <tScale).
+    The values "s" and "t"conform to the "x" and "y" values (respectively) as they are found in the original texture TGA. 
+    The values for sScale and tScale are NOT normalized. This means that a value greater than 1.0 will increase the size of 
+    thetexture. A positive value less than one will reduce the texture to a fraction of its size and 
+    cause it to repeat within the same area as the original texture (Note: see clampTexCoords for ways to control this).; 
+
+
+// Other
+
+9501. vid_ignore_taskbar defaults to 1.
+      The centering that occurs with taking taskbar into consideration is not center of screen.
+      The off-center "center of the screen" window felt weird.
+
+9511. Fixed vid_sdl.h so Windows get a titlebar icon consistently.  Sometimes it was there, sometimes not.
+
+//
+// Developer notes (loose and possibly ugly notes of items of interest -- not curated, hidden deep)
+//
+
+Self note: Ubuntu WSL -> cd /mnt/c/zircs/_zirc_qualker
+
+TODOS:
+CLAMP down on use of vid_width and vid_height cvars by internally foobaring the name a little.
+ Player setup screen color change does not work.  Inherited issue from DarkPlaces Beta.
+ Would like scrollbars in the scrolling menus.
+ Would like to use a different autoscroll for most scrolling menus.
+ Why is Quake Remastered Dimension of the Machine seem choppy at times?
+ Some sort of ability for cl_cmd and sv_cmd to provide more information on the commands
+ for example, if cl_cmd is supported, say the usage of cl_cmd quad2d
+ DarkPlaces Beta - lit sprites do not work correctly.
+ SIV load does not read custom sv_progs progs.dat ... can we get it to do that (or does it do this already?)
+   We want SIV load to support alternate progs.dat capability so we have option of having
+   custom progs in some maps
+ DarkPlaces Beta - build with static libraries.
+ DarkPlaces Beta - set basedir to current working directory if not specified
+ Windows make -HOME work   
+ Prydon cursor crash/speedup done in slightly incorrect way.  Fix?  (Yet does anything even use it?)
+ Last time I checked, troubles loading AD Sepulcher?  Why is this not working when it worked in the past?
+ When built with gcc compiler, "normal Quake" engines either can't connect or the DarkPlaces server
+   does not show up in supporting server browser queries.  Find out nature of mistake.
+ We build gcc with SDL 2.28 - upgrade to latest version?
+ We hide the frames per second display
+  (cl_maxfps.value && showfps_framerate > cl_maxfps.value * 2) .. is more appropriate way?
+  DarkPlaces appears to try to interpolate monsters new in scene with their base frame.  How to fix?
+    We could mark "no interpolation for 1 frame".
+Implement Darkplaces Beta multi-monitor support?
+Mac build
+Upgrade the make file using current DarkPlaces Beta as a template?
+ 
+QUESTIONS:
+ Does video streaming for gif/jpeg work ok with odd widths like 303 which aren't a multiple of 4.
+ Sometimes after running Quakespasm, Zircon video mode settings are a bit strange.  Why is that?
+ We are using sound channel 9 and sending null.wav to stop sound?  Is there a better way?
+ It is said that .bsp that are actually .md3 (replacement models) bypass the requirement of having
+  an info_player_start and show up in the "maps list"
+ UTF8 safety and string functions / autocomplete.
+ Are we using the DarkPlaces Beta SDL method for saying no to Windows scaling?
+ 
+Did we do LAN config menu?
+ revive prvm_menu_gamecommands
+
+write png needs written for lodepng
+
+Get warpzones working in CSQC!
+
+Zircon Galaxy + intermap can do invalid references to player.  Best way to clear ?
+
+// Zircon Beta Release 50
+
+engine pak - anything in this will supercede all, even files laying around
+
+NOTE: r_refdef.scene.worldmodel does not get cleared on disconnect nor gamedir change (FIXED)
+
+SMEJ - default.cfg add that if GAME_NORMAL_0 and not found in quake.rc? (DONE, but maybe not run default.cfg?)
+
+r_shadows 1 ... doesn't work.
+
+CVAR RESET NO USE ENGINE DEFAULTS:  Cvar reset still does not fully reset ... csqc_full_width_height stays 1 after Quake3_Quake1 is started then switch to Quake 1.5. (WORKED AROUND)
+
+1. Alpha/scale/colormod on static entities
+2. Frame map
+3. Intermap
+4. (Zircon Alpha supports none of those either)
+
+fix ent release crash
+Fix frame map if possible?
+
+Collision_NewBrushFromPlanes: unable to rebuild triangles/points for collision brush
+							  becomes dprint
+
+And others like too many triangles
+basedir is funky
+
+r_usesurfaceculling_nosky 0 (defaults 0)
+
+TODO: SCREENSHOT ALL THE MAPS
+
+Zircon Beta has always been slow to do the icon Windows.  This is inherited.
+
+
+Autosave save games?
+
+$diffuse 
+Issue with framemap?
+
+BUG: If a selection is active in the console, PASTE always causes an issue. (FIXED)
+BUG: can't paste in console bug. (FIXED)
+BUG: Re-enter the maps menu the texture is fuct (FIXED)
+
+BUG: Maps prefix fucks up map menu 
+BUG: Unresponsive after a while bug
+BUG: Scroll up selection bug
+
+CRASH: MAP PRE-PROCESSOR ... AAFTER.map --- a post-processed map .. crashes us.  Should it?  Can we avoid it?
+
+PUNT 6. "tool_inspector" "2" traceline collide? displays entity data.
+
+Can trigger brushes be non-cubeoid?
+
+1) Ages are wrong in autosave on Linux?
+2) Lookspring 1 ... does not work? ... does not work in DarkPlaces classic either
+3) Considering fixing mouse for Linux WSL?
+infobar
+
+Investigate: We can fall out of helicopter_map func_train sometimes if we push against wall
+
+
+
+TODO: Check QW entity numbers on maps with very high monster counts.  Find out roll angle can
+	  sometimes get changed.
+
+unicode paths (DONE but ongoing watch out)
+new DarkPlaces SDL improvements that do not require vid_restart? (Update: Maybe not?)
+"devinfo" sometimes does not get vid_restart coordinates?
+
+
+PNG write needs implemented. (DONE)
+MENU_SETUP - The player colors don't change because dynamic texture and reup does not occur.
+Does r_restart call devinfo form connect stuff?
+TODO: Make Screenshot_To_Jpeg_String_Malloc_512_320 call Screenshot_To_Jpeg_Blob_ZAlloc_512_320
+
+Method for silencing video on disconnect is hardcoded sound channel 9
+Baker: Sound channel '9' seems to work but is it 'right' to do this?
+
+Investigate IPv6 network headers + GCC HAX #pragma message ("Hello IPV6 hax")
+
+MUST KEEP:
+-Wno-unused-label
+-Wno-missing-braces
+-Wno-misleading-indentation
+-Wno-switch
+-Wno-parentheses
+-Wno-unused-but-set-variable
+-Wno-unused-value
+
+Get pak_this_map to use map pre-processor?
+-- It doesn't do it for textures.
+-- It can do it for the other things.
+
+Menu multiplayer ... the base skin frame (texnum 196) is the not the one drawn (198) and when
+  the process occurs, it looks for a match in a for look and selects texnum 198 based, it seems,
+  on materialflags.   That is not the one updated.
+
+A: The new texture load process, it ends up loading from disk :(
+   It totally ignores.  It tries to q3 load external texture ...
+
+devinfo cursor change/reset seems to not occur in Linux?
+Not it does ... it might be after gamedir change or something.  Apparently a gamedir resets is bad or missing.  Could affect Windows too.
+
+Eventually dungeon cmd and remove menu grid
+
+So does the command line come in wide?  Or wtf 8 or what?
+
+UTF-8 Explained: https://www.johndcook.com/blog/2019/09/09/how-utf-8-works/
+
+// PATH_DANGEROUS <--- UNICODE_PROBLEM <-- KILL_THIS_NOW .. dpstrndup is unicode aware, right?
+// 
+
+
+vid_mouse 0 on Linux still gets mouse moves.  Windows it doesn't.
+
+//   Figure out Q3map light radius + distance.
+// server fix host_error on start
+// distance based edict seartc
+// tool_inspector 2 (show invisible entities)
+// kleskby descriptions of functions with examples.
+// kleskby steam
+
+

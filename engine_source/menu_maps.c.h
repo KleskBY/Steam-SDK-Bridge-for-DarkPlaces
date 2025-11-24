@@ -1,0 +1,452 @@
+// menu_maps.c.h
+
+#define		local_count					m_maplist_count
+#define		local_cursor				m_maplist_cursor
+#define 	visiblerows 				m_maplist_visiblerows
+#define 	startrow 					m_maplist_startrow
+#define 	endrow 						m_maplist_endrow
+#define		local_click_time			m_maplist_click_time
+#define		local_scroll_is_blocked		m_maplist_scroll_is_blocked
+
+float	m_maplist_click_time;
+int		m_maplist_scroll_is_blocked;
+int		m_maplist_cursor;
+int		m_maplist_visiblerows;
+int		m_maplist_startrow;
+int		m_maplist_endrow;
+
+#if 1
+
+saveo_t mapeo;
+int mapeo_oldmaplistcursor = -1;
+
+#define LEFT_COLUMN_60 60
+
+// DYNX: 0
+
+
+// DYNX: Change - very specific
+CALLERS_ (M_Load2_Draw)
+CALLERS_ (SavegameTextureChange)
+#define saveo NOT_FOOL
+// Q: WHY NOT DELETE CURRENT CURRENT TEXTURE (HOW)
+// AND CREATE A NEW ONE ...
+// Answer: We still need same name.
+//ccs *supername,
+// , int superw, int superh
+
+char g_maps_timestring[64];
+
+
+static void MAPX_TextureChange (saveo_t *super, ccs *q3mapname_or_null)
+{
+	extern int image_width, image_height;
+
+	if (q3mapname_or_null == NULL) {
+		Mem_FreeNull_ (super->savif_bgra_pels);
+		return;
+	}
+
+	// Baker: This either finds it in list (nothing is done) or creates a texture.
+	va_super (levelshots_map_tga, MAX_QPATHX2_256, "levelshots/%s.tga", q3mapname_or_null);
+
+	Mem_FreeNull_ (super->savif_bgra_pels);
+
+	bgra4 *screenshotpels_ta = (bgra4 *)loadimagepixelsbgra (
+		levelshots_map_tga,
+		q_tx_complain_false,
+		q_tx_allowfixtrans_false,
+		q_tx_convertsrgb_false,
+		q_tx_miplevel_null
+	);
+	
+
+	// Shortname no extension which is a problem because could be .OBJ.
+	// Q: invalid we get what timestring?
+	// April 17 2025
+	if (q3mapname_or_null) {
+		va_super (s_maps_slash_dot_bsp, MAX_QPATH_128, "maps/%s.bsp", q3mapname_or_null);
+		//qbool ok = FS_File_TimeString_Fill_MM_DD_YY_HH_MM_AM_Unsafe (s_maps_slash_dot_bsp, g_maps_timestring, sizeof(g_maps_timestring));
+		qbool ok = FS_File_TimeString_Fill_MM_DD_YY_HH_MM_AM_Safe (s_maps_slash_dot_bsp, g_maps_timestring, sizeof(g_maps_timestring));
+		
+		if (!ok) {
+			// Couldn't find the file?
+		}
+	} else {
+		g_maps_timestring[0] = 0;
+	}
+
+	// TRANSFER
+	if (screenshotpels_ta == NULL) {
+		return; // We already freed, just get out.  Make sure to not render.
+	}
+
+	super->superw = image_width;
+	super->superh = image_height;
+	super->aspecthdivw = image_height / (float)image_width;
+	super->aspectheight = 320.0 * super->aspecthdivw;
+
+//	if (image_width != image_height)
+//		int k = 4;
+
+	RELATED_ (DrawQ_SuperPic_Video)
+
+	dynamic_baker_texture_t king = {0};
+#if 1
+	size_t screenshotpels_ta_size = super->superw * super->superh * BGRA_4;
+	super->savif_bgra_pels = (bgra4 *)Z_MemDup_Z (screenshotpels_ta, screenshotpels_ta_size); // Copy original
+	Mem_FreeNull_ (screenshotpels_ta); // Free original :(
+#else
+	super->savif_bgra_pels = screenshotpels_za; // ACQUIRED
+#endif
+
+	Dynamic_Baker_Texture2D_Prep (&king, q_is_dirty_true, super->supername,
+		super->savif_bgra_pels, super->superw, super->superh);
+
+}
+
+//RELATED_ (UnlinkVideoTexture)
+//CALLERS_ (M_Load2_Draw) // like SAVEGAME_PIC_NAME
+//static void DynamicTexturePurge (ccs *dynamic_pic_name, bgra4 *image_pels, int width, int height) // Only called when there are no save games.
+//{
+//	// free the texture (this does not destroy the cachepic_t, which is external)
+//	// CPIFX: Baker: I think this is called to clear the buff free old pic
+//	dynamic_baker_texture_t king = {0};
+//	Dynamic_Baker_Texture2D_Prep (&king, q_is_dirty_false, SAVEGAME_PIC_NAME, image_pels, SAVEGAME_PIC_WIDTH_512, SAVEGAME_PIC_HEIGHT_320);
+//	Draw_FreePic	(SAVEGAME_PIC_NAME); // doesn't free the pic, runs R_SkinFrame_PurgeSkinFrame
+//	king.bpic->skinframe = NULL; // ? Q1SKY
+//}
+//
+
+#endif
+
+RELATED_ (M_Menu_ServerList_f)
+
+// maps/levelshots/whatever.png ...
+void M_Menu_Maps_f(cmd_state_t *cmd)
+{
+	KeyDest_Set (key_menu);
+	menu_state_set_nova (m_maps_26);
+	m_entersound = true;
+
+	if (m_maplist_count == 0 || m_maplist_type_is_menu == false) {
+		GetMapList("", NULL, 0, /*is_menu_fill*/ true, /*autocompl*/ false, /*suppress*/ false);
+		m_maplist_type_is_menu = true;
+	}
+
+#define LEVELSHOTS_PIC_NAME		"levelshotspic"
+
+	if (!mapeo.supername[0]) {
+		c_strlcpy (mapeo.supername, "levelshotspic");
+		mapeo.superw = SAVEGAME_PIC_WIDTH_512;
+		mapeo.superh = SAVEGAME_PIC_HEIGHT_320;
+		mapeo.is_fixed_size = false;
+	}
+
+	// Baker: October 30 2024 - Overkill ... do it anyway ..
+	mapeo_oldmaplistcursor = -1;
+
+	startrow = not_found_neg1, endrow = not_found_neg1;
+
+#if 0 // RE-ENTRANT SO DON'T SET CURSOR
+	local_cursor = 0;
+#endif
+
+	if (local_cursor >= local_count)
+		local_cursor = local_count - 1;
+	if (local_cursor < 0)
+		local_cursor = 0;
+
+	menu_state_reenter = 0; local_scroll_is_blocked = false;
+}
+
+static void M_Maps_Draw (void)
+{
+	int n;
+	cachepic_t *p0;
+	const char *s_available = "Maps";
+
+	drawidx = 0; drawsel_idx = not_found_neg1;  // PPX_Start - does not have frame cursor
+
+	M_Background(640, vid_conheight.integer, q_darken_true);
+
+	M_Print (48 + 32, 32, s_available); // Maps
+
+	// scroll the list as the cursor moves
+
+	drawcur_y = 8 * 6;
+	visiblerows = (int)((menu_height - (2 * 8) - drawcur_y) / 8) - 8;
+
+	// Baker: Do it this way because a short list may have more visible rows than the list count
+	// so using bound doesn't work.
+	if (local_scroll_is_blocked == false) {
+		startrow = local_cursor - (visiblerows / 2);
+
+		if (startrow > local_count - visiblerows)
+			startrow = local_count - visiblerows;
+		if (startrow < 0)
+			startrow = 0; // visiblerows can exceed local_count
+	}
+
+	endrow = Smallest(startrow + visiblerows, local_count);
+
+	p0 = Draw_CachePic ("gfx/p_option");
+	M_DrawPic((640 - Draw_GetPicWidth(p0)) / 2, 4, "gfx/p_option", HOTSPOTS_NONE_0, NA0, NA0);
+
+	if (endrow > startrow) {
+		for (n = startrow; n < endrow; n++) {
+			if (!in_range_beyond (0, n, local_count))
+				continue;
+
+			if (n == local_cursor)
+				drawsel_idx = (n - startrow) /*relative*/;
+
+			maplist_s *mx = &m_maplist[n];
+
+
+			Hotspots_Add2		(menu_x + (7 * 8), menu_y + drawcur_y, (50 * 8) /*360*/, 8, 1, hotspottype_button, n);
+			M_ItemPrint			((8 +  0) * 8, drawcur_y, (const char *)mx->s_name_trunc_16_a, q_unghosted_true);
+			M_ItemPrintBronzey	((8 + 18) * 8, drawcur_y, (const char *)mx->s_bsp_code, q_unghosted_true);
+			M_ItemPrint2		((8 + 21) * 8, drawcur_y, (const char *)mx->s_map_title_trunc_28_a, q_unghosted_true);
+
+			drawcur_y +=8;
+		} // for
+
+
+		// Print current map
+		if (1) {
+			qbool is_connected = cls.state == ca_connected && cls.signon == SIGNONS_4;
+			const char *s = is_connected ? s = cl.worldbasename : "(disconnected)";
+			M_Print        (LEFT_COLUMN_60 * 8, 5 * 8, "current map");
+			M_PrintBronzey (LEFT_COLUMN_60 * 8, 6 * 8, s);
+		}
+	} // endrow > startrow
+	else
+	{
+		M_Print (80, drawcur_y, "No Maps found");
+	}
+
+	PPX_DrawSel_End ();
+
+// NEW:
+	int effective_cursor = local_cursor;
+
+	if (effective_cursor != mapeo_oldmaplistcursor && local_count != 0) {
+		maplist_s *mx = &m_maplist[local_cursor];
+		ccs *q3mapname = (ccs *)mx->s_name_after_maps_folder_a;
+
+		MAPX_TextureChange (&mapeo, q3mapname);
+
+		mapeo_oldmaplistcursor = effective_cursor;
+	} // while 1
+
+	if (local_count == 0)
+		return;
+
+	DrawQ_Pic (
+		menu_x + LEFT_COLUMN_60 * 8 - 4, // x
+		menu_y + 14 * 8 - 4,	// y
+		Draw_CachePic("white"),
+		20 * 8 + 8,				// Width
+		15 * 8 + 8,				// Height
+		0,0,0,alpha_1_0,
+		DRAWFLAG_NORMAL_0
+	);
+
+	if (mapeo.savif_bgra_pels) {
+		// Baker: The screenshots are 1.6 aspect ratio.
+#ifdef _DEBUG
+		int col6 = menu_x + (8 + 21) * 10 + 28 * 8 + 8;
+		int remain = vid_conwidth.integer - col6;
+		int w = remain - 2;
+		int height = mapeo.aspecthdivw == 1 ? w * 3/4 : w * mapeo.aspecthdivw;
+#endif
+
+		p0 = Draw_CachePic_Flags (mapeo.supername, CACHEPICFLAG_QUIET /*CACHEPICFLAG_NOTPERSISTENT | CACHEPICFLAG_QUIET*/); // CACHEPIC_BAKER
+		DrawQ_Pic (
+			menu_x + LEFT_COLUMN_60 * 8, // x
+			menu_y + 15.5 * 8, // y
+			p0,
+			160,		// Width
+			96,			// Height
+			q_rgba_solid_white_4_parms,
+			DRAWFLAG_NORMAL_0
+		);
+
+	}
+
+	if (1) {
+		maplist_s *mx = &m_maplist[local_cursor];
+		//ccs *q3mapname = (ccs *)mx->s_name_after_maps_folder_a;
+		ccs *q3mapname = (ccs *)mx->s_name_trunc_16_a;
+		M_Print (LEFT_COLUMN_60 * 8, 14 * 8, q3mapname); // Maps
+		M_Print (LEFT_COLUMN_60 * 8, 15 * 8,  "\35" repeat18("\36") "\37"); // Maps
+		M_Print (LEFT_COLUMN_60 * 8, 27 * 8, "\35" repeat18("\36") "\37"); // Maps
+		if (g_maps_timestring[0])
+			M_Print (LEFT_COLUMN_60 * 8, 28 * 8, g_maps_timestring); // Maps
+		else M_Print (LEFT_COLUMN_60 * 8, 28 * 8, "no date (in pak)"); // Maps
+	}
+
+}
+
+
+static void M_Maps_Key(cmd_state_t *cmd, int key, int ascii)
+{
+	int lcase_ascii;
+
+	local_scroll_is_blocked = false;
+
+	switch (key) {
+	case K_MOUSE2: // fall thru to K_ESCAPE and then exit
+	case K_ESCAPE:
+		M_Menu_Main_f(cmd);
+		break;
+
+	case K_MOUSE1:
+		if (hotspotx_hover == not_found_neg1)
+			break;
+
+		local_cursor = hotspotx_hover + startrow; // fall thru
+		{
+			int new_cursor = hotspotx_hover + startrow;
+			int is_new_cursor = new_cursor != local_cursor;
+
+			local_scroll_is_blocked = true; // PROTECT AGAINST AUTOSCROLL
+
+			local_cursor = new_cursor;
+
+			if (is_new_cursor) {
+				// GET OUT!  SET FOCUS TO ITEM
+				// Commit_To_Cname ();
+				break;
+			}
+
+			// Same cursor -- double click in effect.
+			// fall thru
+			double new_click_time = Sys_DirtyTime();
+			double click_delta_time = local_click_time ? (new_click_time - local_click_time) : 0;
+			local_click_time = new_click_time;
+
+			if (is_new_cursor == false && click_delta_time && click_delta_time < DOUBLE_CLICK_0_5) {
+				// fall thru and load the map
+			} else {
+				// Entry changed or not fast enough
+				break;
+			}
+		} // block
+
+	case K_ENTER:
+		S_LocalSound ("sound/misc/menu2.wav");
+		if (local_count) {
+			maplist_s *mx = &m_maplist[local_cursor];
+
+			va_super (tmp, 1024, "map %s // %s", mx->s_name_after_maps_folder_a, mx->s_map_title_trunc_28_a);
+
+			Cbuf_AddTextLine (cmd, tmp);
+
+			// Baker r0072: Add maps menu map to command history for recall.
+			Key_History_Push_String (tmp);
+
+			// Maps is re-entrant
+			menu_state_reenter = m_maps_26;
+			KeyDest_Set (key_game); // key_dest = key_game;
+			menu_state_set_nova (m_none);
+		}
+
+		break;
+
+	case K_SPACE:
+		Con_PrintLinef ("Refreshing maps menu list ...");
+		GetMapList("", NULL, 0, /*is_menu_fill*/ true, /*autocompl*/ false, /*suppress*/ false);
+		break;
+
+	case K_HOME:
+		if (local_count)
+			local_cursor = 0;
+		break;
+
+	case K_END:
+		if (local_count)
+			local_cursor = local_count - 1;
+		break;
+
+	case K_PGUP:
+		local_cursor -= visiblerows / 2;
+		if (local_cursor < 0) // PGUP does not wrap, stops at start
+			local_cursor = 0;
+		break;
+
+	case K_MWHEELUP:
+		local_cursor -= visiblerows / 4;
+		if (local_cursor < 0) // K_MWHEELUP does not wrap, stops at start
+			local_cursor = 0;
+		break;
+
+	case K_PGDN:
+		local_cursor += visiblerows / 2;
+		if (local_cursor >= local_count) // PGDN does not wrap, stops at end
+			local_cursor = local_count - 1;
+		break;
+
+	case K_MWHEELDOWN:
+		local_cursor += visiblerows / 4;
+		if (local_cursor >= local_count)
+			local_cursor = local_count - 1;
+		break;
+
+	case K_UPARROW:
+		//S_LocalSound ("sound/misc/menu1.wav");
+		local_cursor--;
+		if (local_cursor < 0) // K_UPARROW wraps around to end EXCEPT ON MEGA LISTS
+			local_cursor = 0; // MEGA EXCEPTION
+		break;
+
+	case K_DOWNARROW:
+		//S_LocalSound ("sound/misc/menu1.wav");
+		local_cursor ++;
+		if (local_cursor >= local_count) // K_DOWNARROW wraps around to start EXCEPT ON MEGA LISTS
+			local_cursor = local_count - 1 ; // MEGA EXCEPTION
+		break;
+
+	case K_LEFTARROW:
+		break;
+
+	case K_RIGHTARROW:
+		break;
+
+	default:
+		lcase_ascii = tolower(ascii);
+		if (in_range ('a', lcase_ascii, 'z')) {
+			// Baker: This is a wraparound seek
+			// Find the next item starting with 'a'
+			// or whatever key someone pressed
+			int startx = local_cursor;
+			char sprefix[2] = { (char)lcase_ascii, 0 };
+
+			for (int iters = 0; iters < local_count; iters ++) {
+				startx ++;
+				if (startx >= local_count) {
+					startx = 0;
+				}
+
+				maplist_s *mx = &m_maplist[startx];
+
+				if (String_Starts_With_Caseless ((char *)mx->s_name_after_maps_folder_a, sprefix)) {
+					local_cursor = startx;
+					break;
+				} // if
+			} // iters
+
+
+		} // if a-z
+		break;
+	} // sw
+
+}
+
+#undef	local_count
+#undef	local_cursor
+#undef 	visiblerows
+#undef 	startrow
+#undef 	endrow
+#undef 	local_scroll_is_blocked
