@@ -62,3 +62,13 @@ void Steam_Connect(const char* addr)
 	snprintf(cmd, sizeof(cmd), "connect %s", addr);
 	g_ExecFromEngine(cmd);
 }
+
+void Steam_OpenUrl(const char* url)
+{
+#ifdef _WIN32
+	if (!url || !url[0])
+		return;
+	if (!SteamFriends()) return;
+	SteamFriends()->ActivateGameOverlayToWebPage(url, k_EActivateGameOverlayToWebPageMode_Default);
+#endif
+}

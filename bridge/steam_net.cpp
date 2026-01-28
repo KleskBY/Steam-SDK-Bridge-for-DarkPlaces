@@ -135,7 +135,8 @@ void SteamNetCallbacks::OnConnectionStatusChanged(SteamNetConnectionStatusChange
 
 void SteamNet_Debug(ESteamNetworkingSocketsDebugOutputType nType, const char* msg)
 {
-    log(msg);
+    if (g_ExecFromEngine) g_ExecFromEngine(("steam_echo " + std::string(msg) + "\n").c_str());
+    //log(msg);
 }
 
 int SteamNet_Init(void)
@@ -159,7 +160,12 @@ int SteamNet_Init(void)
         return 0;
     }
 
+#ifdef _DEBUG
     SteamNetworkingUtils()->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_Msg, SteamNet_Debug);
+#else
+    SteamNetworkingUtils()->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_Warning, SteamNet_Debug);
+#endif
+
     SteamNetworkingUtils()->InitRelayNetworkAccess();
     ResetPeers();
     if (!g_sockets->BeginAsyncRequestFakeIP(1))
@@ -201,7 +207,7 @@ void SteamNet_ServerStop(void)
         g_sockets->CloseListenSocket(g_hListenSocket);
         g_hListenSocket = k_HSteamListenSocket_Invalid;
     }
-    log("SteamNet Server shutdown");
+    //log("SteamNet Server shutdown");
 }
 
 

@@ -8,3 +8,4 @@ void Steam_Frame();
 void Steam_Shutdown();
 char* Steam_GetSteamIDStr();
 void Steam_Connect(const char* addr);
+void Steam_OpenUrl(const char* url);

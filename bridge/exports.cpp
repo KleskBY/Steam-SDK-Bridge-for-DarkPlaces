@@ -31,6 +31,11 @@ extern "C"
         g_ExecFromEngine = fn;
     }
 
+    SB_API void SB_OpenUrl(const char* line)
+    {
+        return Steam_OpenUrl(line);
+    }
+
 
     //Achivement
     SB_API bool SB_Achivement_Unlock(const char* line)
