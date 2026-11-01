@@ -38,14 +38,17 @@ extern "C"
 
 
     //Achivement
-    SB_API bool SB_Achivement_Unlock(const char* line)
+    // int, not bool: the engine declares these as returning int and a bool only sets AL
+    SB_API int SB_Achivement_Unlock(const char* line)
     {
-        return achievement::Unlock(line);
+        if (!line || !line[0]) return 0;
+        return achievement::Unlock(line) ? 1 : 0;
     }
 
-    SB_API bool SB_Achivement_Lock(const char* line)
+    SB_API int SB_Achivement_Lock(const char* line)
     {
-        return achievement::Lock(line);
+        if (!line || !line[0]) return 0;
+        return achievement::Lock(line) ? 1 : 0;
     }
 
 
@@ -96,9 +99,9 @@ extern "C"
         return SteamNet_Write(mysocket, content, contentlength, vaddress);
     }
 
-    SB_API bool SB_SteamNet_IsFakeIPAddr(const lhnetaddress_t* a)
+    SB_API int SB_SteamNet_IsFakeIPAddr(const lhnetaddress_t* a)
     {
-        return SteamNet_IsFakeIPAddr(a);
+        return SteamNet_IsFakeIPAddr(a) ? 1 : 0;
     }
 
     SB_API void SB_SteamNet_InviteOverlay()
